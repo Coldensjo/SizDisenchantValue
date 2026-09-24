@@ -1,0 +1,10 @@
+package-as: DisenchantValue
+
+optional-dependencies:
+  - auctionator
+
+ignore:
+  - README.md
+  - CLAUDE.md
+  - AGENTS.md
+  - .editorconfig
