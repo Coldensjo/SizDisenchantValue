@@ -10,8 +10,11 @@ World of Warcraft addon (Siz DisenchantValue). Addon folder name is `DisenchantV
 CurseForge builds and uploads the zip itself through a GitHub webhook
 (`https://www.curseforge.com/api/projects/1709282/package?token=...`). Nothing is built locally.
 
-- A release is made by pushing a git tag: `git tag 0.2.0 && git push origin 0.2.0`.
-	- Tag containing `alpha` → Alpha, containing `beta` → Beta, anything else → Release.
+- Every push must be tagged, so each pushed change ships as a Release instead of an untagged Alpha:
+	- Find the latest tag with `git tag --sort=-v:refname | head -1` and bump it: patch (`1.0.1`) for fixes, minor (`1.1.0`) for new features. If no tags exist yet, ask the user for the starting version.
+	- Commit, then tag and push branch and tag together: `git tag 1.0.1 && git push origin main 1.0.1`.
+	- Only use a tag containing `alpha` or `beta` when the user asks for a test build.
+	- Tag containing `alpha` → Alpha, containing `beta` → Beta, anything else → Release. A push with no tag becomes an Alpha.
 - `.pkgmeta` controls packaging:
 	- `package-as: DisenchantValue` must stay equal to the `.toc` name, or the game will not load the addon (the repo name differs).
 	- Add new non-addon files (docs, config) to its `ignore:` list so they stay out of the zip.
