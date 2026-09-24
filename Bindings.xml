@@ -1,0 +1,4 @@
+<Bindings>
+  <Binding name="CLICK DisenchantValueButton:LeftButton" header="DISENCHANTVALUE">
+  </Binding>
+</Bindings>
