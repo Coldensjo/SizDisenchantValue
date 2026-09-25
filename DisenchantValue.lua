@@ -107,10 +107,10 @@ end
 -- Prices (Auctionator)
 ---------------------------------------------------------------------------
 
--- This client currently loses Auctionator's saved price database on every
--- reload, so keep our own copy of the prices we use. Whenever Auctionator has
--- fresh data for an item it is merged into db.prices (per day: lowest and
--- highest price seen), and all lookups read from that copy.
+-- Keep our own copy of the prices we use, with a per-day history that outlives
+-- Auctionator's. Whenever Auctionator has fresh data for an item it is merged
+-- into db.prices (per day: lowest and highest price seen), and all lookups read
+-- from that copy.
 local KEEP_DAYS = 30
 
 local function ScanDays()
@@ -299,24 +299,6 @@ end
 local function AddTooltipLine(tooltip, link)
 	if not db or not link then return end
 
-	-- Actual item level for any weapon or armor, unless the tooltip already shows it.
-	local classID = select(6, C_Item.GetItemInfoInstant(link))
-	if classID == ITEMCLASS_WEAPON or classID == ITEMCLASS_ARMOR then
-		local ilvl = GetItemLevel(link)
-		if ilvl and ilvl > 0 then
-			local pattern = ((ITEM_LEVEL or "Item Level %d"):gsub("%%d", "%%d+"))
-			local found = false
-			for i = 2, tooltip:NumLines() do
-				local fs = tooltip["TextLeft" .. i]
-				local text = fs and fs:GetText()
-				if text and text:find(pattern) then found = true break end
-			end
-			if not found then
-				tooltip:AddDoubleLine("Item level:", WHITE_FONT_COLOR:WrapTextInColorCode(tostring(ilvl)))
-			end
-		end
-	end
-
 	local eraValue, eraPartial = ns.GetEraValue(link)
 	if not eraValue then return end -- not a covered item (1-30, uncommon/rare weapon or armor)
 
@@ -413,39 +395,12 @@ local function Record(link)
 end
 
 
----------------------------------------------------------------------------
--- Hex wrapper for Auctionator's binary price strings (see ADDON_LOADED)
----------------------------------------------------------------------------
-
-local HEX_TAG = "DVHEX:"
-
-local function ToHex(str)
-	return (str:gsub(".", function(c) return string.format("%02x", c:byte()) end))
-end
-
-local function FromHex(hex)
-	return (hex:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end))
-end
-
--- Runs at logout, after Auctionator has serialized its database into a binary string.
-local function EncodeAuctionatorStrings()
-	local sv = _G.AUCTIONATOR_PRICE_DATABASE
-	if type(sv) ~= "table" then return end
-	for k, v in pairs(sv) do
-		if type(v) == "string" and v:sub(1, #HEX_TAG) ~= HEX_TAG then
-			sv[k] = HEX_TAG .. ToHex(v)
-		end
-	end
-end
-
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("UNIT_SPELLCAST_SENT")
 frame:RegisterEvent("UNIT_SPELLCAST_FAILED")
 frame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
 frame:RegisterEvent("LOOT_OPENED")
-frame:RegisterEvent("PLAYER_LOGOUT")
-frame:RegisterEvent("PLAYER_LOGIN")
 
 frame:SetScript("OnEvent", function(_, event, ...)
 	if event == "ADDON_LOADED" then
@@ -454,73 +409,12 @@ frame:SetScript("OnEvent", function(_, event, ...)
 		db = DisenchantValueDB
 		db.buckets = db.buckets or {}
 		db.prices = db.prices or {}
-		for key, seed in pairs(_G.DV_SEED or {}) do
-			if not db.prices[key] then db.prices[key] = seed end
-		end
 
-		-- Persistence experiment: what does this client keep in a saved-variables
-		-- file? Compare what the previous session wrote with what we got back.
-		local function Len(v) return type(v) == "string" and #v or type(v) end
-		if db.probeWritten then
-			ns.probeReport = ("previous save: marker=%s, small binary=%s, large binary=%s, learned buckets kept=%s"):format(
-				tostring(db.probeMarker), Len(db.probeSmall), Len(db.probeLarge), tostring(next(db.buckets) ~= nil))
-		else
-			ns.probeReport = "persistence probe not written yet (log out once, then check again)"
-		end
-
-		-- Record what the game handed over at login, so it can be read from this
-		-- addon's saved file after the next logout.
-		local parts = {}
-		for _, name in ipairs({ "AUCTIONATOR_PRICE_DATABASE", "AUCTIONATOR_POSTING_HISTORY",
-			"AUCTIONATOR_VENDOR_PRICE_CACHE", "AUCTIONATOR_CONFIG", "AUCTIONATOR_SAVEDVARS" }) do
-			local v = _G[name]
-			local n = 0
-			if type(v) == "table" then for _ in pairs(v) do n = n + 1 end end
-			parts[#parts + 1] = ("%s=%s(%d)"):format(name:gsub("AUCTIONATOR_", ""), type(v), n)
-		end
-		local sv = _G.AUCTIONATOR_PRICE_DATABASE
-		if type(sv) == "table" then
-			for k, v in pairs(sv) do
-				if k ~= "__dbversion" then
-					parts[#parts + 1] = ("realm %s=%s"):format(tostring(k), type(v) == "string" and ("string:" .. #v) or type(v))
-				end
-			end
-		end
-		db.log = db.log or {}
-		local entry = { time = date("%Y-%m-%d %H:%M:%S"), hexDecoded = ns.decodedCount, probe = ns.probeReport, atSavedVarsLoad = table.concat(parts, "; ") }
-		table.insert(db.log, 1, entry)
-		while #db.log > 6 do table.remove(db.log) end
-		C_Timer.After(5, function()
-			local adb = Auctionator and Auctionator.Database and Auctionator.Database.db
-			local n = 0
-			if adb then for _ in pairs(adb) do n = n + 1 end end
-			entry.auctionatorItemsAfterLogin = n
-		end)
 		db.priceMode = db.priceMode or "mean"
 		frame:UnregisterEvent("ADDON_LOADED")
 
-		-- WORKAROUND: this client discards a whole saved-variables file when it
-		-- contains Auctionator's binary price string. We store that string as hex
-		-- text (see EncodeAuctionatorStrings) and turn it back here, before
-		-- Auctionator reads it at PLAYER_LOGIN.
-		ns.decodedCount = 0
-		if type(_G.AUCTIONATOR_PRICE_DATABASE) == "table" then
-			for k, v in pairs(_G.AUCTIONATOR_PRICE_DATABASE) do
-				if type(v) == "string" and v:sub(1, #HEX_TAG) == HEX_TAG then
-					_G.AUCTIONATOR_PRICE_DATABASE[k] = FromHex(v:sub(#HEX_TAG + 1))
-					ns.decodedCount = ns.decodedCount + 1
-				end
-			end
-		end
-
-		-- Auctionator only deserializes its price data at PLAYER_LOGIN, so at this
-		-- point the raw saved string is still there. Keep it for /dv debug.
-		local sv = _G.AUCTIONATOR_PRICE_DATABASE
-		if type(sv) == "table" then
-			for k, v in pairs(sv) do
-				if type(v) == "string" then ns.rawKey, ns.raw = k, v end
-			end
-		end
+		-- Leftovers from the saved-variables workaround, no longer used.
+		db.log, db.probeMarker, db.probeWritten, db.probeSmall, db.probeLarge = nil, nil, nil, nil, nil
 
 	elseif event == "UNIT_SPELLCAST_SENT" then
 		local unit, target, _, spellID = ...
@@ -536,19 +430,6 @@ frame:SetScript("OnEvent", function(_, event, ...)
 	elseif event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
 		local unit, _, spellID = ...
 		if unit == "player" and spellID == DISENCHANT_SPELL_ID then pending = nil end
-
-	elseif event == "PLAYER_LOGIN" then
-		-- Registered now so our logout handler runs after Auctionator's own.
-		local late = CreateFrame("Frame")
-		late:RegisterEvent("PLAYER_LOGOUT")
-		late:SetScript("OnEvent", EncodeAuctionatorStrings)
-
-	elseif event == "PLAYER_LOGOUT" then
-		if db then
-			db.probeMarker = "ascii-ok"
-			db.probeWritten = true
-			db.probeSmall, db.probeLarge = nil, nil
-		end
 
 	elseif event == "LOOT_OPENED" then
 		if pending and GetTime() - pending.time < PENDING_TIMEOUT then
@@ -583,25 +464,6 @@ SlashCmdList["DISENCHANTVALUE"] = function(msg)
 				and Auctionator.API.v1.GetAuctionPriceByItemID(CALLER_ID, id)
 			Print(("item %d: latest=%s mean=%s"):format(id, tostring(latest), tostring((ns.HistoryMean(id)))))
 		end
-
-		-- Was the saved price data readable when the game handed it to Auctionator?
-		Print("Auctionator realm key: " .. tostring(Auctionator and Auctionator.State and Auctionator.State.CurrentRealm))
-		local sv = _G.AUCTIONATOR_PRICE_DATABASE
-		if type(sv) == "table" then
-			for k, v in pairs(sv) do
-				Print(("saved variable entry %s: %s%s"):format(tostring(k), type(v), type(v) == "string" and (" len " .. #v) or ""))
-			end
-		end
-		if ns.raw then
-			local ok, res = pcall(C_EncodingUtil.DeserializeCBOR, ns.raw)
-			local cnt = 0
-			if ok and type(res) == "table" then for _ in pairs(res) do cnt = cnt + 1 end end
-			Print(("raw string captured at load: key=%s len=%d, deserialize ok=%s, entries=%d, result=%s"):format(
-				tostring(ns.rawKey), #ns.raw, tostring(ok), cnt, ok and type(res) or tostring(res)))
-		else
-			Print("no serialized price string was present at addon load")
-		end
-		Print(ns.probeReport or "no persistence report yet")
 	elseif cmd == "stats" then
 		local buckets, casts = 0, 0
 		for _, rec in pairs(db.buckets) do

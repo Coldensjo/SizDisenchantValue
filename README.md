@@ -13,8 +13,6 @@ Weapon and armor tooltips get two extra lines:
 	- `~` means there are no samples for that exact item level yet, so a nearby level range is used.
 	- `*` means some of the materials have no auction price yet.
 
-Tooltips also show the item level of any weapon or armor, if the game doesn't already.
-
 Prices come from Auctionator (optional, but without it the addon has no prices). Choose between Auctionator's average price over recent days (`/dv mean`, the default) or the latest scan (`/dv latest`).
 
 ## Disenchant button
