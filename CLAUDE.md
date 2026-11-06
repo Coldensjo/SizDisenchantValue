@@ -4,6 +4,9 @@ World of Warcraft addon (Siz DisenchantValue). Addon folder name is `DisenchantV
 
 - CurseForge: https://www.curseforge.com/wow/addons/siz-disenchantvalue (project ID 1709282)
 - GitHub: https://github.com/Coldensjo/SizDisenchantValue
+- Target client: `C:\Program Files (x86)\World of Warcraft\_forever_` (WoW "Forever"; not `_classic_era_` or `_classic_beta_`). Check APIs and other addons (e.g. Auctionator) against that install.
+	- Interface 16001 (`WOW_PROJECT_CAMELOT`) uses the modern auction house (`C_AuctionHouse`) and the **Mainline** variant of Blizzard's UI art and templates (e.g. `MinimalScrollBar`, `auctionhouse-background-index`). Classic-only templates such as `WowClassicScrollBar` exist but their atlases are missing. Reference source: https://github.com/Gethe/wow-ui-source (`live` branch, `Mainline` folders).
+- After every change, copy the addon files (`*.toc`, `*.lua`, `*.xml`) into `C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns\DisenchantValue` so the change can be tested in game. That folder is a separate copy, not a link to this repo. Leave files that only exist there (e.g. `CHANGES.txt`) alone.
 
 ## Releasing (CurseForge automatic packaging)
 

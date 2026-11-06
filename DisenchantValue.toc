@@ -9,3 +9,5 @@
 
 DisenchantValue.lua
 DisenchantButton.lua
+AuctionScan.xml
+AuctionScan.lua

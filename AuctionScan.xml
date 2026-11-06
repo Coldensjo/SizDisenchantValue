@@ -1,0 +1,6 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+	<!-- A row of the "Disenchant deals" list; AuctionScan.lua fills it in. -->
+	<Button name="DisenchantValueDealRowTemplate" virtual="true">
+		<Size y="20"/>
+	</Button>
+</Ui>
