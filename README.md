@@ -1,62 +1,64 @@
 # Disenchant Value
 
-**Shows what a green or blue item is worth disenchanted, priced from Auctionator, plus a one-button disenchanter.**
+See what your green, blue and purple gear is worth disenchanted, disenchant your greens with one button, and find cheap items to disenchant for profit.
 
-Should you vendor that green, sell it on the auction house, or disenchant it? Disenchant Value adds the answer to every weapon and armor tooltip: the expected gold value of the materials you would get from disenchanting it, priced from your own Auctionator scans.
+Made for World of Warcraft Forever.
 
-## Tooltip value
+## Get started
 
-Uncommon, rare and epic weapon and armor tooltips get a **Disenchant value** line: the average worth of what the item disenchants into. Every possible result in the Classic disenchant table counts by its chance and average quantity, priced at its latest auction house price. It is the same value as the **DE value** column in the auction house panel.
+1. Install **Disenchant Value** from [CurseForge](https://www.curseforge.com/wow/addons/siz-disenchantvalue).
+2. Install **Auctionator** as well. Disenchant Value gets its prices from it, so without it you won't see any gold values.
+3. Visit an auction house and run a scan with Auctionator.
 
-- `*` means some of the materials have no auction price yet, so the value is too low.
+Now hover over any green, blue or purple weapon or armor to see what it's worth.
 
-Prices come from your latest Auctionator scan (Auctionator is optional, but without it the addon has no prices).
+## See what an item is worth
 
-## Disenchant button
+Item tooltips get a **Disenchant value** line. It's the average gold you'd get from the materials if you disenchanted the item and sold them.
 
-A **Disenchant** button sits under your backpack and shows how many items are waiting. Each press disenchants the next green weapon or armor piece in your bags. WoW allows one spell per click, so you press once per item.
+If you see a `*` or `?`, Auctionator doesn't have prices for some of the materials yet, so the real value is likely higher. A new Auctionator scan usually fixes it.
 
-- It only shows while your bags are open. It works with Blizzard's bags and with bag addons such as Bagnon, Baganator, AdiBags, ArkInventory and ElvUI.
-- **Hold Alt and drag** the button to move it. Drop it on any window to attach it there, or anywhere on the screen. Wherever it is, it still only shows while your bags are open. `/dv attach` puts it back under your bags.
-- It skips items on your ignore list.
-- With the auction house check on, it also skips items that sell for more on the auction house than they would give disenchanted.
-- Bind it to a key under Game Menu → Options → Keybindings → AddOns → Disenchant Value.
-- Turn on auto loot (`/console autoLootDefault 1`) so the materials go straight to your bags.
+## Disenchant with one button
 
-## Auction house deals
+You need the Enchanting profession for this.
 
-When you open the auction house, a **Disenchant Deals** panel opens next to it, styled like the auction house itself. The **Disenchant** tab under the auction house window shows or hides it, and it remembers your choice. Press **Scan** to search the auction house for every uncommon, rare and epic weapon and armor piece. Each item is listed with its lowest price, its expected disenchant value and the profit (disenchant value minus price).
+Open your bags and a **Disenchant** button appears underneath, showing how many items are ready. Press it once per item.
 
-- Click a column header to sort by it; click again to reverse the order. The default is highest profit first.
-- Tick **Only show profitable** to hide items that cost more than they disenchant for.
-- The bracket buttons (1-15, 16-20, ... 61+) filter by disenchant item level bracket, so you can hunt for the materials you want. Tick several to combine them; **All** clears the filter. Hover a bracket to see which dust, essence and shard it gives.
-- Prices are shown in gold, silver and copper with coin icons.
-- **Quick buy:** click a row to buy the cheapest one of that item straight away, with no confirmation prompt.
-	- Resting the mouse on a row checks its current price, so the click can buy at once. If the price isn't checked yet, the click checks it, and the next click buys.
-	- A click only ever buys at the price the row shows. After a buy, the row updates to the next cheapest one, so you can keep clicking to buy more at that price.
-	- If the cheapest one now costs more than the list showed, the row turns orange with a **Price went up** warning. Your next click only confirms the new price; the click after that buys.
-	- Your own auctions are never bought.
-- Right-click a row to open the item in the auction house's buy view. Shift-click links it in chat.
-- **DE value** is the average worth of what the item disenchants into, priced from your latest Auctionator scan. Every possible result in the disenchant table counts by its chance and average quantity. For example, 75% for 1-2 Strange Dust and 25% for 1-2 Lesser Magic Essence is worth 0.75 × 1.5 × the dust price + 0.25 × 1.5 × the essence price. Your own disenchant results are not used here. The disenchant button's auction house check uses the same value.
+- It only disenchants **green** weapons and armor. It never touches blue or purple items.
+- It leaves alone anything that sells for more on the auction house than it would give disenchanted.
+- To move the button, hold **Alt** and drag it.
+- To use a key instead, go to Game Menu → Options → Keybindings → AddOns → Disenchant Value.
+- To have the materials go straight to your bags, type `/console autoLootDefault 1` in chat once.
 
-## Commands
+## Find deals at the auction house
 
-| Command | What it does |
+A **Disenchant Deals** window opens beside the auction house. Press **Scan** to list every weapon and armor piece for sale, with its price, disenchant value and profit. The best deals are at the top.
+
+> **Careful: clicking an item buys it right away, with no "are you sure?" popup.**
+
+- A click only ever buys at the price you see. If the price is still being checked, click again.
+- If the price went up, the row turns orange. Click once to accept the new price, then again to buy.
+- It never buys your own auctions.
+- Profit is an average. Disenchant results are random, and the auction house takes a cut when you sell.
+
+Other things you can do in the window:
+
+- Tick **Only show profitable** to hide items that aren't worth buying.
+- Use the number buttons to show only certain item levels. Hover over one to see which materials it gives.
+- Click a column name to sort by it.
+- Right-click an item to open it in the normal auction house view.
+- Use the **Disenchant** tab under the auction house to show or hide the window.
+
+## Chat commands
+
+You don't need these for normal use.
+
+| Type this | What it does |
 |---|---|
-| `/dv stats` | How many disenchants have been recorded |
-| `/dv reset` | Clear all learned disenchant data |
-| `/dv button` | Show or hide the disenchant button |
-| `/dv list` | List what the button will disenchant, and what it skips and why |
-| `/dv ignore [item]` / `/dv unignore [item]` | Never (or again) disenchant an item. Shift-click the item into chat |
-| `/dv ahcheck on\|off` | Skip items worth more on the auction house |
-| `/dv ah` | Show or hide the auction house deals panel (same as the Disenchant tab) |
-| `/dv attach` | Put the disenchant button back under your bags |
-
-## For addon authors
-
-Other addons can read the values. Both take an item link or item ID and return copper, or `nil` if the item can't be disenchanted or has no price:
-
-- `DisenchantValueAPI.GetValue(item)`: the learned value, or the era table value if there is no learned data yet.
-- `DisenchantValueAPI.GetEraValue(item)`: the era table value only.
-
-Auctionator's "DE Value" column uses this.
+| `/dv list` | Shows what the button will disenchant, what it will skip, and why |
+| `/dv ignore` + item | Tells the button to never disenchant that item. Shift-click the item to add it after the command |
+| `/dv unignore` + item | Lets the button disenchant that item again |
+| `/dv ahcheck off` | Makes the button also disenchant items that would sell for more. `/dv ahcheck on` turns the check back on |
+| `/dv button` | Shows or hides the button |
+| `/dv attach` | Puts the button back under your bags |
+| `/dv ah` | Shows or hides the Disenchant Deals window |

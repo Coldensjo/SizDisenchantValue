@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Disenchant Value
-## Notes: Adds the average disenchant value (priced from Auctionator data) to item tooltips. Learns drop rates from your own disenchants.
+## Notes: Adds the average disenchant value (priced from Auctionator data) to item tooltips, with a one-button disenchanter and an auction house deals panel.
 ## Author: Siz
 ## Version: @project-version@
 ## X-Curse-Project-ID: 1709282
