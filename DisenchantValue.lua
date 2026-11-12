@@ -488,6 +488,6 @@ SlashCmdList["DISENCHANTVALUE"] = function(msg)
 		-- handled by the auction house scanner (ah)
 	else
 		Print("/dv stats | /dv reset | /dv ah")
-		Print("/dv button | /dv list | /dv ignore [link] | /dv unignore [link] | /dv ahcheck on|off | /dv attach on|off")
+		Print("/dv button | /dv list | /dv ignore [link] | /dv unignore [link] | /dv ahcheck on|off | /dv attach on|off | /dv status")
 	end
 end

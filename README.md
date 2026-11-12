@@ -22,11 +22,12 @@ If you see a `*` or `?`, Auctionator doesn't have prices for some of the materia
 
 You need the Enchanting profession for this.
 
-Open your bags and a **Disenchant** button appears underneath, showing how many items are ready. Press it once per item.
+Open your bags and a **Disenchant** button appears underneath, showing how many items are ready. Press it once per item. It works with the normal bags and with bag addons such as Baganator, Bagnon, AdiBags, ArkInventory and ElvUI.
 
 - It only disenchants **green** weapons and armor. It never touches blue or purple items.
 - It leaves alone anything that sells for more on the auction house than it would give disenchanted.
 - To move the button, hold **Alt** and drag it.
+- The button hides during combat and comes back when combat ends.
 - To use a key instead, go to Game Menu → Options → Keybindings → AddOns → Disenchant Value.
 - To have the materials go straight to your bags, type `/console autoLootDefault 1` in chat once.
 
@@ -61,4 +62,5 @@ You don't need these for normal use.
 | `/dv ahcheck off` | Makes the button also disenchant items that would sell for more. `/dv ahcheck on` turns the check back on |
 | `/dv button` | Shows or hides the button |
 | `/dv attach` | Puts the button back under your bags |
+| `/dv status` | Shows why the button is or isn't showing (useful when reporting a problem) |
 | `/dv ah` | Shows or hides the Disenchant Deals window |

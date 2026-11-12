@@ -10,6 +10,7 @@ or key press, so it works through the items one press at a time.
 		Baganator, AdiBags, ArkInventory, ElvUI). Alt-drag it to move it: drop
 		it on any window to attach it there, or anywhere on the screen. It still
 		only shows while the bags are open. /dv attach puts it back under the bags.
+		It hides in combat and comes back when combat ends.
 	* Bind a key: Game Menu > Options > Keybindings > AddOns > Disenchant Value.
 	* Items skipped: ignored items (/dv ignore [item link]) and, with the auction
 		house check on, items whose auction price is higher than their expected
@@ -49,8 +50,20 @@ local function SpellName()
 end
 
 local function KnowsDisenchant()
-	if IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL_ID) then return true end
-	if IsSpellKnown and IsSpellKnown(DISENCHANT_SPELL_ID) then return true end
+	local id = DISENCHANT_SPELL_ID
+	if IsPlayerSpell and IsPlayerSpell(id) then return true end
+	if IsSpellKnown and IsSpellKnown(id) then return true end
+	if IsSpellKnownOrOverridesKnown and IsSpellKnownOrOverridesKnown(id) then return true end
+	if C_SpellBook then
+		if C_SpellBook.IsSpellKnown and C_SpellBook.IsSpellKnown(id) then return true end
+		if C_SpellBook.IsSpellInSpellBook and C_SpellBook.IsSpellInSpellBook(id) then return true end
+	end
+	-- Last resort: look the spell up by name in the spellbook.
+	local name = SpellName()
+	if name and C_SpellBook and C_SpellBook.FindSpellBookSlotForSpell then
+		local ok, slot = pcall(C_SpellBook.FindSpellBookSlotForSpell, name)
+		if ok and slot then return true end
+	end
 	return false
 end
 
@@ -107,16 +120,15 @@ end
 
 local button
 do
-	-- Created in a hidden holder: it only becomes visible once it is attached
-	-- to the bags (see "Attaching to the bags").
-	local holder = CreateFrame("Frame")
-	holder:Hide()
-	local ok, b = pcall(CreateFrame, "Button", "DisenchantValueButton", holder,
+	-- Always parented to UIParent and never anchored to a bag window: a secure
+	-- button makes any frame it is parented or anchored to protected, which
+	-- stops bag addons from showing or hiding their windows in combat.
+	local ok, b = pcall(CreateFrame, "Button", "DisenchantValueButton", UIParent,
 		"UIPanelButtonTemplate, SecureActionButtonTemplate")
 	if ok then
 		button = b
 	else
-		button = CreateFrame("Button", "DisenchantValueButton", holder, "SecureActionButtonTemplate")
+		button = CreateFrame("Button", "DisenchantValueButton", UIParent, "SecureActionButtonTemplate")
 		button.bg = button:CreateTexture(nil, "BACKGROUND")
 		button.bg:SetAllPoints()
 		button.bg:SetColorTexture(0.1, 0.1, 0.1, 0.85)
@@ -126,6 +138,7 @@ end
 
 button:SetSize(150, 26)
 button:SetPoint("CENTER", UIParent, "CENTER", 0, -200)
+button:SetFrameStrata("DIALOG")
 button:SetMovable(true)
 button:SetClampedToScreen(true)
 -- Register for one edge only: with both, the macro runs twice per press and the
@@ -141,9 +154,10 @@ button:SetText("Disenchant")
 button:Hide()
 
 local current, count, skippedCount = nil, 0, 0
-local bagFrame -- the backpack window the button belongs to; it shows and hides with it
+local available = false -- the button should show (with the bags) at all
 local dragged = false -- set while Alt-dragging: the click that ends a drag must not disenchant
 local needsRefresh = false
+local UpdatePosition -- defined in "Following the bags"
 
 local function Refresh()
 	local d = DB()
@@ -153,6 +167,7 @@ local function Refresh()
 
 	local name = SpellName()
 	if d.showButton == false or not name or not KnowsDisenchant() then
+		available = false
 		button:Hide()
 		return
 	end
@@ -166,7 +181,8 @@ local function Refresh()
 		button:SetAttribute("macrotext1", "")
 	end
 	button:SetText(("Disenchant (%d)"):format(count))
-	button:Show()
+	available = true
+	if UpdatePosition then UpdatePosition(true) end
 end
 
 local queued = false
@@ -230,31 +246,38 @@ end)
 button:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
 ---------------------------------------------------------------------------
--- Attaching to the bags
--- Visibility and position are separate:
---	* The button is always parented to the backpack window, so it only shows
---		while the bags are open. That is whichever backpack window is open:
---		Blizzard's or a bag addon's (Bagnon, Baganator, AdiBags, ArkInventory,
---		ElvUI, ...).
---	* Its position is under the bags by default. Alt-dragging it drops it onto
---		any window, where it then sits (saved by frame name), or onto empty
---		screen, where it stays put. Either way it still only shows with the bags.
--- Saved offsets are in screen pixels, so they hold whatever the scale of the
--- bag window it is parented to.
+-- Following the bags
+-- The button stays parented to UIParent and is only ever anchored to UIParent.
+-- Parenting or anchoring a secure button to a bag addon's window would make
+-- that window protected, and the addon could then no longer show or hide it in
+-- combat (bags that will not open, ESC that will not close them).
+-- Instead a plain watcher frame checks, out of combat, which backpack window is
+-- open (Blizzard's or a bag addon's: Bagnon, Baganator, AdiBags, ArkInventory,
+-- ElvUI, Combuctor, ...) and shows the button at the matching screen spot.
+--	* Default spot: under the backpack window.
+--	* Alt-drag drops it onto any window, where it then sits (saved by frame name
+--		and offset), or onto empty screen, where it stays put. Either way it
+--		only shows while the bags are open.
+-- In combat the button is hidden: a secure button cannot be shown, hidden or
+-- moved then, so it could not follow the bags.
+-- Saved offsets are in screen pixels, so they hold whatever the UI scale.
 ---------------------------------------------------------------------------
 
--- Backpack windows of bag addons, by frame name.
+-- Backpack windows of bag addons with fixed frame names.
 local BAG_ADDON_FRAMES = {
-	"Baganator_SingleViewBackpackViewFrame",
-	"Baganator_CategoryViewBackpackViewFrame",
 	"AdiBagsContainer1",
 	"ARKINV_Frame1",
 	"ElvUI_ContainerFrame",
 }
--- Bag addons with generated frame names (Bagnon, Combuctor) register their
--- windows in UISpecialFrames; their inventory window is the one whose name
--- starts with one of these and is not a bank, guild bank or settings window.
-local BAG_ADDON_PREFIXES = { "bagnon", "combuctor" }
+-- Bag addons with generated frame names register their windows in
+-- UISpecialFrames; their inventory window is the one whose name starts with one
+-- of these (lower case) and is not a bank, guild bank or settings window.
+local BAG_ADDON_PREFIXES = {
+	"baganator_singleviewbackpackviewframe",
+	"baganator_categoryviewbackpackviewframe",
+	"bagnon",
+	"combuctor",
+}
 local NOT_INVENTORY = { "bank", "guild", "vault", "config", "option", "setting", "keyring" }
 
 local function FrameBagID(frame)
@@ -266,6 +289,7 @@ local function FrameBagID(frame)
 end
 
 local function IsInventoryName(name)
+	if type(name) ~= "string" then return false end
 	local lower = name:lower()
 	for _, word in ipairs(NOT_INVENTORY) do
 		if lower:find(word, 1, true) then return false end
@@ -276,94 +300,120 @@ local function IsInventoryName(name)
 	return false
 end
 
+local function Visible(f)
+	return type(f) == "table" and f.IsVisible and f:IsVisible() and f:GetLeft() ~= nil
+end
+
 -- Blizzard's backpack window: the combined bags frame, or the one showing bag 0.
-local function BlizzardBackpack(shownOnly)
+local function BlizzardBackpack()
 	local combined = _G.ContainerFrameCombinedBags
-	local manager = _G.ContainerFrameSettingsManager
-	if combined and manager and manager.IsUsingCombinedBags and manager:IsUsingCombinedBags() then
-		if not shownOnly or combined:IsShown() then return combined end
-	end
+	if Visible(combined) then return combined end
 	for i = 1, 13 do
 		local f = _G["ContainerFrame" .. i]
-		if f and f:IsShown() and FrameBagID(f) == 0 then return f end
+		if Visible(f) and FrameBagID(f) == 0 then return f end
 	end
-	if not shownOnly then return _G.ContainerFrame1 end
 end
 
 -- The backpack window that is open right now, bag addons first.
+local lastFound
 local function FindOpenBagFrame()
+	if Visible(lastFound) then return lastFound end
+	lastFound = nil
 	for _, name in ipairs(BAG_ADDON_FRAMES) do
 		local f = _G[name]
-		if f and f.IsVisible and f:IsVisible() then return f end
+		if Visible(f) then lastFound = f return f end
 	end
 	for _, name in ipairs(UISpecialFrames or {}) do
-		local f = _G[name]
-		if f and f.IsVisible and f:IsVisible() and IsInventoryName(name) then return f end
+		if IsInventoryName(name) then
+			local f = _G[name]
+			if Visible(f) then lastFound = f return f end
+		end
 	end
-	return BlizzardBackpack(true)
+	return BlizzardBackpack()
 end
 
--- Positions the button: on a saved window, at a saved screen spot, or under the bags.
-local function Place(d)
-	button:ClearAllPoints()
-	local s = button:GetEffectiveScale()
+-- Screen position (pixels) of the button's top-left corner for this bag window.
+local function TargetSpot(d, bagFrame)
+	if d.attach == false and d.screenPos then
+		return d.screenPos.x, d.screenPos.y
+	end
+	if d.attach == false and d.buttonPos and d.buttonPos.point then
+		-- Position saved by older versions: convert once to a screen spot.
+		local p = d.buttonPos
+		button:ClearAllPoints()
+		button:SetPoint(p.point, UIParent, p.relPoint or p.point, p.x or 0, p.y or 0)
+		local left, top = button:GetLeft(), button:GetTop()
+		if not (left and top) then return end
+		local s = button:GetEffectiveScale()
+		d.screenPos, d.buttonPos = { x = left * s, y = top * s }, nil
+		return d.screenPos.x, d.screenPos.y
+	end
 	local anchor = d.anchor
 	local target = anchor and anchor.name and _G[anchor.name]
-	if d.attach == false and d.screenPos then
-		button:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", d.screenPos.x / s, d.screenPos.y / s)
-	elseif d.attach == false and d.buttonPos and d.buttonPos.point then
-		-- Position saved by older versions, in UIParent units.
-		local p, f = d.buttonPos, UIParent:GetEffectiveScale() / s
-		button:SetPoint(p.point, UIParent, p.relPoint or p.point, (p.x or 0) * f, (p.y or 0) * f)
-	elseif d.attach ~= false and type(target) == "table" and target.GetObjectType then
-		button:SetPoint("TOPLEFT", target, "TOPLEFT", anchor.x / s, anchor.y / s)
-	else
-		-- Default, and a saved window that does not exist yet (bag addons often
-		-- create theirs on first use): under the bags. Every bag opening tries again.
-		button:SetPoint("TOPLEFT", bagFrame, "BOTTOMLEFT", 8, 2)
+	if d.attach ~= false and Visible(target) then
+		local ts = target:GetEffectiveScale()
+		return target:GetLeft() * ts + anchor.x, target:GetTop() * ts + anchor.y
 	end
+	-- Default, and a saved window that is not open: under the bags.
+	local bs = bagFrame:GetEffectiveScale()
+	return (bagFrame:GetLeft() + 8) * bs, (bagFrame:GetBottom() + 2) * bs
 end
 
-local attachPending = false
-
-local function Attach()
+local placedX, placedY
+-- Shows the button at its spot while the bags are open, hides it otherwise.
+-- Out of combat only. force: move it even if the spot looks unchanged.
+function UpdatePosition(force)
+	if InCombatLockdown() or dragged then return end
 	local d = DB()
-	if not d then return end
-	-- A secure button cannot be re-parented or moved in combat.
-	if InCombatLockdown() then attachPending = true return end
-	attachPending = false
-
-	-- Stay with the last backpack window while the bags are closed.
-	local frame = FindOpenBagFrame() or bagFrame or BlizzardBackpack(false)
-	if not frame then return end
-	if button:GetParent() ~= frame then button:SetParent(frame) end
-	bagFrame = frame
-	button:SetFrameStrata("HIGH")
-	button:SetFrameLevel(frame:GetFrameLevel() + 20)
-	Place(d)
-end
-
-local attachQueued = false
-local function QueueAttach()
-	if attachQueued then return end
-	attachQueued = true
-	C_Timer.After(0, function()
-		attachQueued = false
-		Attach()
-	end)
-end
-
--- Called at login, after every addon is loaded, so bag addons that replace
--- these functions are hooked too.
-local function HookBagOpening()
-	for _, fn in ipairs({ "ToggleBackpack", "OpenBackpack", "ToggleAllBags", "OpenAllBags", "OpenBag", "ToggleBag" }) do
-		if type(_G[fn]) == "function" then hooksecurefunc(fn, QueueAttach) end
+	local bagFrame = available and d and FindOpenBagFrame()
+	if not bagFrame then
+		if button:IsShown() then button:Hide() end
+		return
 	end
+	local x, y = TargetSpot(d, bagFrame)
+	if not (x and y) then return end
+	if force or not button:IsShown() or not placedX
+		or math.abs(x - placedX) > 0.5 or math.abs(y - placedY) > 0.5 then
+		placedX, placedY = x, y
+		local s = button:GetEffectiveScale()
+		button:ClearAllPoints()
+		button:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / s, y / s)
+	end
+	if not button:IsShown() then button:Show() end
+end
+
+-- A plain (non-secure) frame that keeps the button with the bags. Its
+-- OnUpdate only runs out of combat, a few times a second.
+local watcher = CreateFrame("Frame", nil, UIParent)
+local elapsedSince, ticks = 0, 0
+watcher:SetScript("OnUpdate", function(_, elapsed)
+	elapsedSince = elapsedSince + elapsed
+	if elapsedSince < 0.1 then return end
+	elapsedSince = 0
+	ticks = ticks + 1
+	UpdatePosition(false)
+end)
+watcher:Hide()
+
+-- Also react right away when a bag window opens or closes (HookScript on
+-- another addon's frame is harmless: it does not taint or protect it).
+local hooked = {}
+local function OnBagShowHide()
+	C_Timer.After(0, function() UpdatePosition(true) end)
+end
+local function HookBagWindows()
 	local frames = { _G.ContainerFrameCombinedBags }
 	for i = 1, 13 do frames[#frames + 1] = _G["ContainerFrame" .. i] end
 	for _, name in ipairs(BAG_ADDON_FRAMES) do frames[#frames + 1] = _G[name] end
+	for _, name in ipairs(UISpecialFrames or {}) do
+		if IsInventoryName(name) then frames[#frames + 1] = _G[name] end
+	end
 	for _, f in pairs(frames) do
-		if f and f.HookScript then f:HookScript("OnShow", QueueAttach) end
+		if type(f) == "table" and f.HookScript and not hooked[f] then
+			hooked[f] = true
+			f:HookScript("OnShow", OnBagShowHide)
+			f:HookScript("OnHide", OnBagShowHide)
+		end
 	end
 end
 
@@ -389,7 +439,7 @@ local function Drop()
 	local s = button:GetEffectiveScale()
 	local left, top = button:GetLeft() * s, button:GetTop() * s
 	local target = WindowUnderCursor()
-	if target and target ~= button then
+	if target and target ~= button and target:GetLeft() then
 		local ts = target:GetEffectiveScale()
 		d.attach = true
 		d.anchor = { name = target:GetName(), x = left - target:GetLeft() * ts, y = top - target:GetTop() * ts }
@@ -401,20 +451,12 @@ local function Drop()
 		d.screenPos = { x = left, y = top }
 		Print("button moved. It only shows while your bags are open. /dv attach puts it back under the bags.")
 	end
-	Attach()
 end
 
 button:RegisterForDrag("LeftButton", "RightButton")
 button:SetScript("OnDragStart", function(self)
 	if InCombatLockdown() or not IsAltKeyDown() then return end
 	dragged = true
-	-- Move on the screen while dragging, so the old window does not carry it along.
-	local left, top = self:GetLeft() * self:GetEffectiveScale(), self:GetTop() * self:GetEffectiveScale()
-	self:SetParent(UIParent)
-	self:SetFrameStrata("TOOLTIP")
-	self:ClearAllPoints()
-	local s = self:GetEffectiveScale()
-	self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left / s, top / s)
 	self:StartMoving()
 end)
 button:SetScript("OnDragStop", function(self)
@@ -424,20 +466,22 @@ button:SetScript("OnDragStop", function(self)
 	-- Let the mouse look through the button to find the window under it.
 	self:EnableMouse(false)
 	C_Timer.After(0.05, function()
+		if not dragged then return end -- combat started; PLAYER_REGEN_DISABLED reset it
 		Drop()
 		self:EnableMouse(true)
 		dragged = false
+		UpdatePosition(true)
 	end)
 end)
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("BAG_UPDATE_DELAYED")
+events:RegisterEvent("PLAYER_REGEN_DISABLED")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:RegisterEvent("SPELLS_CHANGED")
 events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 events:RegisterEvent("GET_ITEM_INFO_RECEIVED")
-pcall(events.RegisterEvent, events, "USE_COMBINED_BAGS_CHANGED")
 events:RegisterEvent("CVAR_UPDATE")
 events:SetScript("OnEvent", function(_, event, unit, _, spellID)
 	if event == "CVAR_UPDATE" then
@@ -447,16 +491,27 @@ events:SetScript("OnEvent", function(_, event, unit, _, spellID)
 		if not d then return end
 		d.ignore = d.ignore or {}
 		if d.ahCheck == nil then d.ahCheck = true end
-		HookBagOpening()
-		Attach()
+		watcher:Show()
+		HookBagWindows()
 		QueueRefresh()
+	elseif event == "PLAYER_REGEN_DISABLED" then
+		-- Still allowed here, just before the combat lockdown starts.
+		watcher:Hide()
+		if dragged then
+			button:StopMovingOrSizing()
+			button:EnableMouse(true)
+			dragged = false
+		end
+		button:Hide()
+	elseif event == "PLAYER_REGEN_ENABLED" then
+		watcher:Show()
+		if needsRefresh then QueueRefresh() end
+		UpdatePosition(true)
 	elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
 		-- Only disenchants matter here; bag changes are covered by BAG_UPDATE_DELAYED.
 		if unit == "player" and spellID == DISENCHANT_SPELL_ID then QueueRefresh() end
 	else
-		if attachPending or event == "BAG_UPDATE_DELAYED" or event == "USE_COMBINED_BAGS_CHANGED" then
-			QueueAttach()
-		end
+		HookBagWindows() -- bag addons may create their windows after login
 		QueueRefresh()
 	end
 end)
@@ -496,14 +551,41 @@ function ns.ButtonSlash(msg)
 		-- Back under the bags. ("off" from older versions: leave it where it is on screen.)
 		d.attach = (rest:lower() ~= "off")
 		d.anchor = nil
-		if d.attach then d.screenPos, d.buttonPos = nil, nil end
+		if d.attach then
+			d.screenPos, d.buttonPos = nil, nil
+		elseif not d.screenPos and button:IsShown() and button:GetLeft() then
+			local s = button:GetEffectiveScale()
+			d.screenPos = { x = button:GetLeft() * s, y = button:GetTop() * s }
+		end
 		Print(d.attach and "button is back under your bags" or "button stays where it is; Alt-drag it to move")
-		Attach()
+		UpdatePosition(true)
 		Refresh()
 	elseif cmd == "ahcheck" then
 		d.ahCheck = (rest:lower() ~= "off")
 		Print("auction house check " .. (d.ahCheck and "on" or "off"))
 		Refresh()
+	elseif cmd == "status" then
+		-- Why the button is or is not showing. Most important lines last, so
+		-- they stay on screen in the chat box.
+		local names = {}
+		for _, n in ipairs(UISpecialFrames or {}) do
+			if type(n) == "string" and n:lower():find("bag", 1, true) then
+				local fr = _G[n]
+				names[#names + 1] = n .. ((fr and fr.IsVisible and fr:IsVisible()) and " (open)" or "")
+			end
+		end
+		Print("bag windows known: " .. (#names > 0 and table.concat(names, ", ") or "none"))
+		Print(("attach: %s, anchor: %s, screenPos: %s"):format(tostring(d.attach),
+			tostring(d.anchor and d.anchor.name), tostring(d.screenPos and (d.screenPos.x .. "," .. d.screenPos.y))))
+		Print(("button shown: %s, visible: %s, at: %s, %s, strata %s"):format(tostring(button:IsShown()),
+			tostring(button:IsVisible()), tostring(button:GetLeft()), tostring(button:GetTop()), button:GetFrameStrata()))
+		local ok, f = pcall(FindOpenBagFrame)
+		Print("open bag window: " .. (not ok and ("error: " .. tostring(f)) or (f and (f:GetName() or "(unnamed)") or "none found")))
+		Print(("available: %s, in combat: %s, dragging: %s, watcher shown: %s, ticks: %d"):format(
+			tostring(available), tostring(InCombatLockdown()), tostring(dragged), tostring(watcher:IsShown()), ticks))
+		Print(("spell name: %s, knows Disenchant: %s, button setting: %s, IsPlayerSpell: %s"):format(
+			tostring(SpellName()), tostring(KnowsDisenchant()), d.showButton == false and "hidden" or "shown",
+			tostring(IsPlayerSpell and IsPlayerSpell(DISENCHANT_SPELL_ID))))
 	elseif cmd == "list" then
 		local items, skipped = Scan()
 		Print(("%d to disenchant, %d skipped"):format(#items, #skipped))
