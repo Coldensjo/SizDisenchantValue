@@ -14,10 +14,16 @@ by its expected disenchant value and shows them in a sortable list.
 		The row then shows the next cheapest; a price rise must be confirmed.
 	* Right-click a row to open that item in the auction house's own buy view.
 	* Shift-click a row to link the item in chat.
+	* DE value is what the materials sell for after the 5% auction house cut
+		(/dv ahcut off for the full price); profit is DE value less the buyout.
+		A gray DE value uses a saved price: Auctionator has no current one.
+	* Drag the panel by its title or any empty spot to move it anywhere on the
+		screen; /dv ahreset puts it back beside the auction house.
 
 Uses the modern auction house API (C_AuctionHouse).
 
-Slash commands: /dv ah (turn the panel on or off)
+Slash commands: /dv ah (turn the panel on or off), /dv ahreset (back beside
+the auction house, normal size), /dv ahscale 0.5-1.5 (panel size)
 ]]
 
 local _, ns = ...
@@ -44,7 +50,7 @@ end
 ---------------------------------------------------------------------------
 
 -- One entry per browse result:
--- { browse, itemKey, itemID, link, name, displayName, quality, ilvl, bracket, quantity, buyout, value, profit }
+-- { browse, itemKey, itemID, link, name, displayName, quality, ilvl, bracket, quantity, buyout, value, stale, profit }
 local results = {}
 local seen = {}       -- browse result key -> entry, so repeated events do not add duplicates
 local sortKey, sortDesc = "profit", true
@@ -84,7 +90,12 @@ local function Evaluate(r)
 		end
 		r.name, r.link, r.quality = r.name or name, link, quality
 	end
-	r.value = ns.GetExpectedValue and ns.GetExpectedValue(r.link) or nil
+	-- value is after the auction house cut, so profit is what reselling the materials nets.
+	if ns.GetExpectedValue then
+		r.value, r.stale = ns.GetExpectedValue(r.link)
+	else
+		r.value, r.stale = nil, nil
+	end
 	r.profit = r.value and r.buyout and (r.value - r.buyout) or nil
 	return true
 end
@@ -581,6 +592,64 @@ local function SetPanelWanted(wanted)
 	UpdateTab()
 end
 
+---------------------------------------------------------------------------
+-- Panel position: beside the auction house until it is dragged somewhere
+-- else. A dragged position is saved in DisenchantValueDB.ahPanelPos as the
+-- top left corner in UIParent units (from the bottom left of the screen), so
+-- it stays put when the panel's scale, the auction house's scale or the UI
+-- scale changes. The panel is kept on screen once moved.
+---------------------------------------------------------------------------
+
+local MIN_SCALE, MAX_SCALE = 0.5, 1.5
+
+-- Factor from UIParent units to the panel's own units.
+local function UIToPanel()
+	return UIParent:GetEffectiveScale() / panel:GetEffectiveScale()
+end
+
+local function ApplyPosition()
+	if not panel then return end
+	local d = DB()
+	local scale = d and tonumber(d.ahPanelScale) or 1
+	panel:SetScale(scale)
+	panel:ClearAllPoints()
+	local pos = d and d.ahPanelPos
+	if pos and pos.ui ~= 1 then
+		-- Saved by a test build in the panel's own units: start over beside the auction house.
+		d.ahPanelPos, pos = nil, nil
+	end
+	if pos and pos.x and pos.y then
+		local f = UIToPanel()
+		panel:SetClampedToScreen(true)
+		panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos.x * f, pos.y * f)
+		-- As tall as the auction house looks on screen, whatever the two scales.
+		panel:SetHeight(AuctionHouseFrame:GetHeight() * AuctionHouseFrame:GetEffectiveScale() / panel:GetEffectiveScale())
+	else
+		-- The original placement: along the auction house's right edge.
+		panel:SetClampedToScreen(false)
+		panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
+		panel:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 0, 0)
+	end
+end
+
+local function SavePosition()
+	local d = DB()
+	local left, top = panel:GetLeft(), panel:GetTop()
+	if d and left and top then
+		local f = UIToPanel()
+		d.ahPanelPos = { x = left / f, y = top / f, ui = 1 }
+	end
+	ApplyPosition()
+end
+
+local function SetScaleSaved(scale)
+	local d = DB()
+	if not d then return end
+	-- The saved corner is in UIParent units, so it stays where it is on screen.
+	d.ahPanelScale = (scale ~= 1) and scale or nil
+	ApplyPosition()
+end
+
 local function SetTitle(frame, text)
 	if frame.SetTitle then
 		frame:SetTitle(text)
@@ -657,6 +726,9 @@ local function InitRow(row, r)
 				GameTooltip:AddLine("Checking the current price...", 0.7, 0.7, 0.7)
 			end
 			GameTooltip:AddLine("Right-click to open it in the auction house.", 0.7, 0.7, 0.7)
+			if res.stale then
+				GameTooltip:AddLine("DE value uses a saved price: Auctionator has no current price for one of its materials.", 0.6, 0.6, 0.6, true)
+			end
 			GameTooltip:Show()
 		end)
 		row:SetScript("OnLeave", function(self)
@@ -691,7 +763,11 @@ local function InitRow(row, r)
 	else
 		SetMoney(c[4], r.buyout)
 	end
-	SetMoney(c[5], r.value)
+	if r.stale then
+		SetMoney(c[5], r.value, 0.6, 0.6, 0.6)
+	else
+		SetMoney(c[5], r.value)
+	end
 	if r.profit and r.profit > 0 then
 		SetMoney(c[6], r.profit, 0.1, 1, 0.1)
 	elseif r.profit then
@@ -768,11 +844,15 @@ local function CreateBracketButtons(parent, anchor)
 		SetTooltip(b, function()
 			GameTooltip:AddLine("Item level " .. label)
 			GameTooltip:AddLine("Uncommon items give:", 0.7, 0.7, 0.7)
-			for _, itemID in ipairs(br.materials) do
+			local function AddMaterial(itemID, suffix)
 				local name = C_Item.GetItemInfo(itemID)
 				if not name and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
-				GameTooltip:AddLine(name or ("item " .. itemID), 1, 1, 1)
+				GameTooltip:AddLine((name or ("item " .. itemID)) .. (suffix or ""), 1, 1, 1)
 			end
+			for mi, itemID in ipairs(br.materials) do
+				AddMaterial(itemID, (mi == 2 and br.weaponEssence) and " (armor)" or nil)
+			end
+			if br.weaponEssence then AddMaterial(br.weaponEssence, " (weapons)") end
 			GameTooltip:AddLine("Click to show or hide this bracket.", 0.7, 0.7, 0.7)
 		end)
 		list[i] = b
@@ -823,9 +903,30 @@ local function CreatePanel()
 	ns.auctionPanel = panel
 	if ButtonFrameTemplate_HidePortrait then ButtonFrameTemplate_HidePortrait(panel) end
 	panel:SetWidth(PANEL_WIDTH)
-	panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
-	panel:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 0, 0)
 	panel:EnableMouse(true)
+	ApplyPosition()
+
+	-- Drag by the title bar or any empty spot (rows and buttons keep their clicks).
+	panel:SetMovable(true)
+	panel:RegisterForDrag("LeftButton")
+	panel:SetScript("OnDragStart", function(self)
+		-- Swap the two-point anchor to the auction house for a single corner
+		-- point with a fixed height first, so the panel keeps its size while moving.
+		local left, top, height = self:GetLeft(), self:GetTop(), self:GetHeight()
+		if left and top and height then
+			self:ClearAllPoints()
+			self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+			self:SetHeight(height)
+		end
+		self:SetClampedToScreen(true)
+		self:StartMoving()
+	end)
+	panel:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		-- Our own saved position is used, not the client's layout cache.
+		if self.SetUserPlaced then self:SetUserPlaced(false) end
+		SavePosition()
+	end)
 	SetTitle(panel, "Disenchant Deals")
 	panel:Hide()
 
@@ -987,6 +1088,7 @@ function ns.ShowAuctionPanel()
 	wipe(brackets)
 	for i in pairs(d and d.ahBrackets or {}) do brackets[i] = true end
 	panel:UpdateBrackets()
+	ApplyPosition()
 	panel:SetShown(IsPanelWanted())
 	UpdateTab()
 end
@@ -998,8 +1100,24 @@ function ns.RefreshAuctionValues()
 end
 
 function ns.AuctionSlash(msg)
-	local cmd = (msg or ""):lower():match("^(%S*)")
-	if cmd ~= "ah" then return false end
+	local cmd, arg = (msg or ""):lower():match("^(%S*)%s*(%S*)")
+	if cmd ~= "ah" and cmd ~= "ahreset" and cmd ~= "ahscale" then return false end
+	local d = DB()
+	if cmd == "ahreset" then
+		if d then d.ahPanelPos, d.ahPanelScale = nil, nil end
+		ApplyPosition()
+		Print("auction house panel is back beside the auction house")
+		return true
+	elseif cmd == "ahscale" then
+		local scale = tonumber(arg)
+		if not scale or scale < MIN_SCALE or scale > MAX_SCALE then
+			Print(("usage: /dv ahscale %.1f-%.1f (now %s)"):format(MIN_SCALE, MAX_SCALE, tostring(d and d.ahPanelScale or 1)))
+		else
+			SetScaleSaved(scale)
+			Print("auction house panel scale " .. scale)
+		end
+		return true
+	end
 	local wanted = not IsPanelWanted()
 	SetPanelWanted(wanted)
 	Print("auction house panel " .. (wanted and "shown" or "hidden"))

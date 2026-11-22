@@ -13,8 +13,8 @@ or key press, so it works through the items one press at a time.
 		It hides in combat and comes back when combat ends.
 	* Bind a key: Game Menu > Options > Keybindings > AddOns > Disenchant Value.
 	* Items skipped: ignored items (/dv ignore [item link]) and, with the auction
-		house check on, items whose auction price is higher than their expected
-		disenchant value.
+		house check on, items that would bring in more sold on the auction house
+		than their expected disenchant value (both after the 5% auction house cut).
 	* Turn on auto loot (/console autoLootDefault 1) so results are picked up
 		without clicking the loot window.
 
@@ -71,7 +71,8 @@ end
 -- Choosing what to disenchant
 ---------------------------------------------------------------------------
 
--- Expected disenchant value in copper (see ns.GetExpectedValue in the main file).
+-- Expected disenchant value in copper, after the auction house cut
+-- (see ns.GetExpectedValue in the main file).
 local function ExpectedValue(link)
 	return ns.GetExpectedValue and ns.GetExpectedValue(link)
 end
@@ -86,8 +87,10 @@ local function SkipReason(link, itemID)
 	local d = DB()
 	if d.ignore[itemID] then return "on your ignore list" end
 	if d.ahCheck then
+		-- Both sides after the auction house cut: what selling the item would
+		-- bring in against what selling its materials would.
 		local ah, value = AuctionPrice(link), ExpectedValue(link)
-		if ah and value and ah > value then return "sells for more on the auction house" end
+		if ah and value and ns.AfterAHCut(ah) > value then return "sells for more on the auction house" end
 	end
 end
 
@@ -194,6 +197,7 @@ local function QueueRefresh()
 		Refresh()
 	end)
 end
+ns.QueueButtonRefresh = QueueRefresh
 
 -- True while a cast is in progress or the target item is locked (e.g. by a
 -- disenchant already underway). Clicking then would make /cast fail and leave
