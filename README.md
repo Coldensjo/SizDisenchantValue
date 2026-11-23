@@ -62,8 +62,9 @@ Other things you can do in the window:
 - Use the number buttons to show only certain item levels. Hover over one to see which materials it gives.
 - Click a column name to sort by it.
 - Right-click an item to open it in the normal auction house view.
-- Use the **Disenchant** tab under the auction house, or type `/dv deals`, to show or hide the window.
-- Drag the window by its title (or any empty spot) to move it, for example when it doesn't fit beside the auction house. It remembers where you put it. `/dv ahreset` puts it back.
+- Use the **Disenchant** tab under the auction house, or type `/dv deals`, to show or hide the window. Closing it or hiding it this way stops a scan.
+- Use the **minimize** button on the title bar (or `/dv min`) to collapse the window to the title bar so it does not cover the auction house. It stays open: a scan keeps running and results keep updating. Click it again to restore the list.
+- Drag the window by its title (or any empty spot) to move it, for example when it doesn't fit beside the auction house. It remembers where you put it, including after you close the auction house. The title-bar reset button, or `/dv ahreset`, puts it back beside the auction house.
 
 ## Chat commands
 
@@ -79,6 +80,7 @@ You don't need these for normal use.
 | `/dv attach` | Puts the button back under your bags |
 | `/dv status` | Shows why the button is or isn't showing (useful when reporting a problem) |
 | `/dv deals` | Shows or hides the Disenchant Deals window. `/dv ah` does the same |
+| `/dv min` | Collapses the Disenchant Deals window to the title bar, or restores it. A scan keeps running |
 | `/dv ahreset` | Puts the Disenchant Deals window back beside the auction house, at normal size |
 | `/dv ahscale 0.8` | Makes the Disenchant Deals window smaller or bigger (0.5 to 1.5) |
 | `/dv ahcut off` | Shows values without taking off the auction house's 5% cut. `/dv ahcut on` takes it off again (the default) |

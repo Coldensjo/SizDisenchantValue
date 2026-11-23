@@ -560,9 +560,9 @@ SlashCmdList["DISENCHANTVALUE"] = function(msg)
 	elseif ns.ButtonSlash and ns.ButtonSlash(msg) then
 		-- handled by the disenchant button (button, list, ignore, unignore, ahcheck)
 	elseif ns.AuctionSlash and ns.AuctionSlash(msg) then
-		-- handled by the auction house scanner (deals, ah, ahreset, ahscale)
+		-- handled by the auction house scanner (deals, ah, min, ahreset, ahscale)
 	else
-		Print("/dv stats | /dv reset | /dv ahcut on|off | /dv deals | /dv ah | /dv ahreset | /dv ahscale 0.5-1.5")
+		Print("/dv stats | /dv reset | /dv ahcut on|off | /dv deals | /dv ah | /dv min | /dv ahreset | /dv ahscale 0.5-1.5")
 		Print("/dv button | /dv list | /dv ignore [link] | /dv unignore [link] | /dv ahcheck on|off | /dv attach on|off | /dv status")
 	end
 end

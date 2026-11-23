@@ -18,13 +18,20 @@ by its expected disenchant value and shows them in a sortable list.
 		(/dv ahcut off for the full price); profit is DE value less the buyout.
 		A gray DE value uses a saved price: Auctionator has no current one.
 	* Drag the panel by its title or any empty spot to move it anywhere on the
-		screen; /dv ahreset puts it back beside the auction house.
+		screen; the title-bar reset button or /dv ahreset puts it back beside the
+		auction house. The position is saved in DisenchantValueDB.ahPanelPos.
+	* The title-bar minimize button (or /dv min) collapses it to the title bar
+		so it does not cover the auction house. The panel stays shown, a scan
+		keeps running, and results keep updating; restore shows the current
+		list. This is not the same as the Disenchant tab, /dv deals, or close,
+		which hide the window and stop a scan. Minimized state is saved.
 	* The panel always draws on top of the auction house and Auctionator.
 
 Uses the modern auction house API (C_AuctionHouse).
 
-Slash commands: /dv deals or /dv ah (turn the panel on or off), /dv ahreset
-(back beside the auction house, normal size), /dv ahscale 0.5-1.5 (panel size)
+Slash commands: /dv deals or /dv ah (turn the panel on or off), /dv min
+(collapse to the title bar or restore), /dv ahreset (back beside the auction
+house, normal size), /dv ahscale 0.5-1.5 (panel size)
 ]]
 
 local _, ns = ...
@@ -112,6 +119,7 @@ local function Compare(a, b)
 end
 
 local Update -- forward declaration, defined with the panel
+local UpdateTitle -- title-bar text while minimized; defined with the panel
 
 local function Rebuild()
 	wipe(view)
@@ -124,6 +132,7 @@ local function Rebuild()
 	end
 	table.sort(view, Compare)
 	if Update then Update() end
+	if UpdateTitle then UpdateTitle() end
 end
 
 local rebuildQueued = false
@@ -167,6 +176,7 @@ local pending          -- "send" or "more": the request waiting for the throttle
 
 local function SetStatus(text)
 	if ns.auctionPanel then ns.auctionPanel.status:SetText(text or "") end
+	if UpdateTitle then UpdateTitle() end
 end
 
 local function UpdateButtons()
@@ -503,6 +513,8 @@ end)
 ---------------------------------------------------------------------------
 
 local PANEL_WIDTH = 680
+-- Title bar only: tall enough for the close, minimize and reset buttons.
+local MINIMIZED_HEIGHT = 32
 local COLUMNS = {
 	{ key = "name", label = "Item", width = 0, justify = "LEFT" }, -- takes the remaining width
 	{ key = "ilvl", label = "iLvl", width = 40, justify = "RIGHT" },
@@ -619,18 +631,35 @@ local function ApplyPosition()
 		-- Saved by a test build in the panel's own units: start over beside the auction house.
 		d.ahPanelPos, pos = nil, nil
 	end
+	local minimized = d and d.ahPanelMinimized
+	-- Always anchored by the top, so collapsing to the title bar does not jump.
 	if pos and pos.x and pos.y then
 		local f = UIToPanel()
 		panel:SetClampedToScreen(true)
 		panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos.x * f, pos.y * f)
-		-- As tall as the auction house looks on screen, whatever the two scales.
-		panel:SetHeight(AuctionHouseFrame:GetHeight() * AuctionHouseFrame:GetEffectiveScale() / panel:GetEffectiveScale())
+		if minimized then
+			panel:SetHeight(MINIMIZED_HEIGHT)
+		else
+			-- As tall as the auction house looks on screen, whatever the two scales.
+			panel:SetHeight(AuctionHouseFrame:GetHeight() * AuctionHouseFrame:GetEffectiveScale() / panel:GetEffectiveScale())
+		end
+	elseif minimized then
+		-- Same default corner as below, but only the top point, so the height can shrink.
+		panel:SetClampedToScreen(false)
+		panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
+		panel:SetHeight(MINIMIZED_HEIGHT)
 	else
 		-- The original placement: along the auction house's right edge.
 		panel:SetClampedToScreen(false)
 		panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
 		panel:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 0, 0)
 	end
+end
+
+local function ResetPanelPosition()
+	local d = DB()
+	if d then d.ahPanelPos, d.ahPanelScale = nil, nil end
+	ApplyPosition()
 end
 
 local function SavePosition()
@@ -658,6 +687,79 @@ local function SetTitle(frame, text)
 		local fs = frame.TitleText or (frame.TitleContainer and frame.TitleContainer.TitleText)
 		if fs then fs:SetText(text) end
 	end
+end
+
+local function IsMinimized()
+	local d = DB()
+	return d and d.ahPanelMinimized and true or false
+end
+
+local function SolidPaint(tex)
+	-- Gold, like the default title text. SetColorTexture on newer clients;
+	-- SetTexture(r,g,b,a) is the older solid-colour form.
+	if tex.SetColorTexture then
+		tex:SetColorTexture(1, 0.82, 0, 1)
+	else
+		tex:SetTexture(1, 0.82, 0, 1)
+	end
+end
+
+local function GoldBar(parent, width, height, x, y)
+	local tex = parent:CreateTexture(nil, "ARTWORK")
+	SolidPaint(tex)
+	tex:SetSize(width, height)
+	tex:SetPoint("CENTER", x, y)
+	return tex
+end
+
+function UpdateTitle()
+	if not panel then return end
+	if not IsMinimized() then
+		SetTitle(panel, "Disenchant Deals")
+		return
+	end
+	if scanning then
+		SetTitle(panel, "Disenchant Deals — scanning " .. #results)
+	else
+		local n = 0
+		for _, r in ipairs(results) do
+			if r.profit and r.profit > 0 then n = n + 1 end
+		end
+		if #results > 0 then
+			SetTitle(panel, "Disenchant Deals — " .. n .. " profitable")
+		else
+			SetTitle(panel, "Disenchant Deals")
+		end
+	end
+end
+
+local function SetBodyShown(shown)
+	if not (panel and panel.body) then return end
+	for _, region in ipairs(panel.body) do
+		region:SetShown(shown)
+	end
+end
+
+local function UpdateMinButton()
+	if not (panel and panel.minButton) then return end
+	local minimized = IsMinimized()
+	if panel.minButton.minus then panel.minButton.minus:SetShown(not minimized) end
+	if panel.minButton.plusH then
+		panel.minButton.plusH:SetShown(minimized)
+		panel.minButton.plusV:SetShown(minimized)
+	end
+end
+
+-- Collapse to the title bar, or restore the full list. The frame stays shown
+-- and a running scan is not stopped (unlike closing or /dv deals).
+local function SetMinimized(minimized)
+	local d = DB()
+	if d then d.ahPanelMinimized = minimized and true or false end
+	if not panel then return end
+	ApplyPosition()
+	SetBodyShown(not IsMinimized())
+	UpdateTitle()
+	UpdateMinButton()
 end
 
 local function InitRow(row, r)
@@ -871,6 +973,10 @@ local function CreateBracketButtons(parent, anchor)
 		for i, b in ipairs(list) do Paint(b, brackets[i]) end
 	end
 
+	panel.bracketButtons = { all }
+	for i, b in ipairs(list) do
+		panel.bracketButtons[#panel.bracketButtons + 1] = b
+	end
 end
 
 local function CreateHeaders(parent)
@@ -940,6 +1046,61 @@ local function CreatePanel()
 	if panel.CloseButton then
 		panel.CloseButton:SetScript("OnClick", function() SetPanelWanted(false) end)
 	end
+
+	-- Title-bar chrome: reset position, then minimize/restore, then close.
+	-- Small gold line icons, the same 20px class as a typical close "X".
+	local function TitleBarButton(tooltip)
+		local b = CreateFrame("Button", nil, panel)
+		b:SetSize(20, 20)
+		b:EnableMouse(true)
+		b:RegisterForClicks("LeftButtonUp")
+		b:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+		b:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+			GameTooltip:AddLine(tooltip(self))
+			GameTooltip:Show()
+		end)
+		b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		return b
+	end
+
+	local minBtn = TitleBarButton(function()
+		return IsMinimized() and "Restore" or "Minimize"
+	end)
+	minBtn.minus = GoldBar(minBtn, 8, 2, 0, 0)
+	minBtn.plusH = GoldBar(minBtn, 8, 2, 0, 0)
+	minBtn.plusV = GoldBar(minBtn, 2, 8, 0, 0)
+	minBtn.plusH:Hide()
+	minBtn.plusV:Hide()
+	minBtn:SetScript("OnClick", function()
+		SetMinimized(not IsMinimized())
+	end)
+	if panel.CloseButton then
+		minBtn:SetPoint("RIGHT", panel.CloseButton, "LEFT", 0, 0)
+		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
+		if type(lvl) == "number" then minBtn:SetFrameLevel(lvl) end
+	else
+		minBtn:SetPoint("TOPRIGHT", -6, -6)
+	end
+	panel.minButton = minBtn
+
+	-- Crosshair: put the window back beside the auction house (same as /dv ahreset).
+	local resetBtn = TitleBarButton(function()
+		return "Reset position"
+	end)
+	GoldBar(resetBtn, 6, 2, 0, 6)
+	GoldBar(resetBtn, 6, 2, 0, -6)
+	GoldBar(resetBtn, 2, 6, 6, 0)
+	GoldBar(resetBtn, 2, 6, -6, 0)
+	resetBtn:SetPoint("RIGHT", minBtn, "LEFT", 0, 0)
+	resetBtn:SetScript("OnClick", function()
+		ResetPanelPosition()
+	end)
+	if panel.CloseButton then
+		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
+		if type(lvl) == "number" then resetBtn:SetFrameLevel(lvl) end
+	end
+	panel.resetButton = resetBtn
 
 	-- Item name column takes whatever width the others leave.
 	local inner = PANEL_WIDTH - 16 - 4 - 26 -- list insets, then header container insets
@@ -1022,6 +1183,15 @@ local function CreatePanel()
 	status:SetJustifyH("LEFT")
 	status:SetText("Press Scan to search the auction house for weapons and armor to disenchant.")
 	panel.status = status
+	panel.list = list
+	panel.profitableLabel = profitableLabel
+
+	panel.body = { scan, profitable, profitableLabel, list, status }
+	if panel.bracketButtons then
+		for _, b in ipairs(panel.bracketButtons) do
+			panel.body[#panel.body + 1] = b
+		end
+	end
 
 	function panel:UpdateButtons()
 		self.scan:SetText(scanning and "Stop" or "Scan")
@@ -1029,6 +1199,7 @@ local function CreatePanel()
 
 	panel:SetScript("OnShow", function(self)
 		self:Raise()
+		SetMinimized(IsMinimized())
 		Rebuild()
 		UpdateTab()
 	end)
@@ -1039,6 +1210,7 @@ local function CreatePanel()
 
 	panel:UpdateButtons()
 	panel:UpdateBrackets()
+	SetMinimized(IsMinimized())
 end
 
 -- A tab under the auction house, after its own tabs, that shows or hides the panel.
@@ -1095,7 +1267,7 @@ function ns.ShowAuctionPanel()
 	wipe(brackets)
 	for i in pairs(d and d.ahBrackets or {}) do brackets[i] = true end
 	panel:UpdateBrackets()
-	ApplyPosition()
+	SetMinimized(IsMinimized())
 	panel:SetShown(IsPanelWanted())
 	UpdateTab()
 end
@@ -1108,12 +1280,15 @@ end
 
 function ns.AuctionSlash(msg)
 	local cmd, arg = (msg or ""):lower():match("^(%S*)%s*(%S*)")
-	if cmd ~= "ah" and cmd ~= "deals" and cmd ~= "ahreset" and cmd ~= "ahscale" then return false end
+	if cmd ~= "ah" and cmd ~= "deals" and cmd ~= "ahreset" and cmd ~= "ahscale" and cmd ~= "min" then return false end
 	local d = DB()
 	if cmd == "ahreset" then
-		if d then d.ahPanelPos, d.ahPanelScale = nil, nil end
-		ApplyPosition()
+		ResetPanelPosition()
 		Print("auction house panel is back beside the auction house")
+		return true
+	elseif cmd == "min" then
+		SetMinimized(not IsMinimized())
+		Print("auction house panel " .. (IsMinimized() and "minimized" or "restored"))
 		return true
 	elseif cmd == "ahscale" then
 		local scale = tonumber(arg)
