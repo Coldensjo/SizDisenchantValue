@@ -14,10 +14,24 @@ by its expected disenchant value and shows them in a sortable list.
 		The row then shows the next cheapest; a price rise must be confirmed.
 	* Right-click a row to open that item in the auction house's own buy view.
 	* Shift-click a row to link the item in chat.
+	* DE value is what the materials sell for after the 5% auction house cut
+		(/dv ahcut off for the full price); profit is DE value less the buyout.
+		A gray DE value uses a saved price: Auctionator has no current one.
+	* Drag the panel by its title or any empty spot to move it anywhere on the
+		screen; the title-bar reset button or /dv ahreset puts it back beside the
+		auction house. The position is saved in DisenchantValueDB.ahPanelPos.
+	* The title-bar minimize button (or /dv min) collapses it to the title bar
+		so it does not cover the auction house. The panel stays shown, a scan
+		keeps running, and results keep updating; restore shows the current
+		list. This is not the same as the Disenchant tab, /dv deals, or close,
+		which hide the window and stop a scan. Minimized state is saved.
+	* The panel always draws on top of the auction house and Auctionator.
 
 Uses the modern auction house API (C_AuctionHouse).
 
-Slash commands: /dv ah (turn the panel on or off)
+Slash commands: /dv deals or /dv ah (turn the panel on or off), /dv min
+(collapse to the title bar or restore), /dv ahreset (back beside the auction
+house, normal size), /dv ahscale 0.5-1.5 (panel size)
 ]]
 
 local _, ns = ...
@@ -44,7 +58,7 @@ end
 ---------------------------------------------------------------------------
 
 -- One entry per browse result:
--- { browse, itemKey, itemID, link, name, displayName, quality, ilvl, bracket, quantity, buyout, value, profit }
+-- { browse, itemKey, itemID, link, name, displayName, quality, ilvl, bracket, quantity, buyout, value, stale, profit }
 local results = {}
 local seen = {}       -- browse result key -> entry, so repeated events do not add duplicates
 local sortKey, sortDesc = "profit", true
@@ -84,7 +98,12 @@ local function Evaluate(r)
 		end
 		r.name, r.link, r.quality = r.name or name, link, quality
 	end
-	r.value = ns.GetExpectedValue and ns.GetExpectedValue(r.link) or nil
+	-- value is after the auction house cut, so profit is what reselling the materials nets.
+	if ns.GetExpectedValue then
+		r.value, r.stale = ns.GetExpectedValue(r.link)
+	else
+		r.value, r.stale = nil, nil
+	end
 	r.profit = r.value and r.buyout and (r.value - r.buyout) or nil
 	return true
 end
@@ -100,6 +119,7 @@ local function Compare(a, b)
 end
 
 local Update -- forward declaration, defined with the panel
+local UpdateTitle -- title-bar text while minimized; defined with the panel
 
 local function Rebuild()
 	wipe(view)
@@ -112,6 +132,7 @@ local function Rebuild()
 	end
 	table.sort(view, Compare)
 	if Update then Update() end
+	if UpdateTitle then UpdateTitle() end
 end
 
 local rebuildQueued = false
@@ -155,6 +176,7 @@ local pending          -- "send" or "more": the request waiting for the throttle
 
 local function SetStatus(text)
 	if ns.auctionPanel then ns.auctionPanel.status:SetText(text or "") end
+	if UpdateTitle then UpdateTitle() end
 end
 
 local function UpdateButtons()
@@ -491,6 +513,8 @@ end)
 ---------------------------------------------------------------------------
 
 local PANEL_WIDTH = 680
+-- Title bar only: tall enough for the close, minimize and reset buttons.
+local MINIMIZED_HEIGHT = 32
 local COLUMNS = {
 	{ key = "name", label = "Item", width = 0, justify = "LEFT" }, -- takes the remaining width
 	{ key = "ilvl", label = "iLvl", width = 40, justify = "RIGHT" },
@@ -581,6 +605,81 @@ local function SetPanelWanted(wanted)
 	UpdateTab()
 end
 
+---------------------------------------------------------------------------
+-- Panel position: beside the auction house until it is dragged somewhere
+-- else. A dragged position is saved in DisenchantValueDB.ahPanelPos as the
+-- top left corner in UIParent units (from the bottom left of the screen), so
+-- it stays put when the panel's scale, the auction house's scale or the UI
+-- scale changes. The panel is kept on screen once moved.
+---------------------------------------------------------------------------
+
+local MIN_SCALE, MAX_SCALE = 0.5, 1.5
+
+-- Factor from UIParent units to the panel's own units.
+local function UIToPanel()
+	return UIParent:GetEffectiveScale() / panel:GetEffectiveScale()
+end
+
+local function ApplyPosition()
+	if not panel then return end
+	local d = DB()
+	local scale = d and tonumber(d.ahPanelScale) or 1
+	panel:SetScale(scale)
+	panel:ClearAllPoints()
+	local pos = d and d.ahPanelPos
+	if pos and pos.ui ~= 1 then
+		-- Saved by a test build in the panel's own units: start over beside the auction house.
+		d.ahPanelPos, pos = nil, nil
+	end
+	local minimized = d and d.ahPanelMinimized
+	-- Always anchored by the top, so collapsing to the title bar does not jump.
+	if pos and pos.x and pos.y then
+		local f = UIToPanel()
+		panel:SetClampedToScreen(true)
+		panel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos.x * f, pos.y * f)
+		if minimized then
+			panel:SetHeight(MINIMIZED_HEIGHT)
+		else
+			-- As tall as the auction house looks on screen, whatever the two scales.
+			panel:SetHeight(AuctionHouseFrame:GetHeight() * AuctionHouseFrame:GetEffectiveScale() / panel:GetEffectiveScale())
+		end
+	elseif minimized then
+		-- Same default corner as below, but only the top point, so the height can shrink.
+		panel:SetClampedToScreen(false)
+		panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
+		panel:SetHeight(MINIMIZED_HEIGHT)
+	else
+		-- The original placement: along the auction house's right edge.
+		panel:SetClampedToScreen(false)
+		panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
+		panel:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 0, 0)
+	end
+end
+
+local function ResetPanelPosition()
+	local d = DB()
+	if d then d.ahPanelPos, d.ahPanelScale = nil, nil end
+	ApplyPosition()
+end
+
+local function SavePosition()
+	local d = DB()
+	local left, top = panel:GetLeft(), panel:GetTop()
+	if d and left and top then
+		local f = UIToPanel()
+		d.ahPanelPos = { x = left / f, y = top / f, ui = 1 }
+	end
+	ApplyPosition()
+end
+
+local function SetScaleSaved(scale)
+	local d = DB()
+	if not d then return end
+	-- The saved corner is in UIParent units, so it stays where it is on screen.
+	d.ahPanelScale = (scale ~= 1) and scale or nil
+	ApplyPosition()
+end
+
 local function SetTitle(frame, text)
 	if frame.SetTitle then
 		frame:SetTitle(text)
@@ -588,6 +687,170 @@ local function SetTitle(frame, text)
 		local fs = frame.TitleText or (frame.TitleContainer and frame.TitleContainer.TitleText)
 		if fs then fs:SetText(text) end
 	end
+end
+
+local function IsMinimized()
+	local d = DB()
+	return d and d.ahPanelMinimized and true or false
+end
+
+local function SolidPaint(tex)
+	-- Gold, like the default title text. SetColorTexture on newer clients;
+	-- SetTexture(r,g,b,a) is the older solid-colour form.
+	if tex.SetColorTexture then
+		tex:SetColorTexture(1, 0.82, 0, 1)
+	else
+		tex:SetTexture(1, 0.82, 0, 1)
+	end
+end
+
+local function GoldBar(parent, width, height, x, y)
+	local tex = parent:CreateTexture(nil, "ARTWORK")
+	SolidPaint(tex)
+	tex:SetSize(width, height)
+	tex:SetPoint("CENTER", x, y)
+	return tex
+end
+
+-- Reset-position icon: a 12px square target (2px ring + 2px center dot), the
+-- same stroke and gold as the minus/plus, pixel-aligned in a 20px button.
+local function GoldTarget(parent)
+	local outer, stroke = 12, 2
+	local mid = (outer - stroke) / 2 -- 5: centre of each edge bar
+	GoldBar(parent, outer, stroke, 0, mid)
+	GoldBar(parent, outer, stroke, 0, -mid)
+	GoldBar(parent, stroke, outer - 2 * stroke, -mid, 0)
+	GoldBar(parent, stroke, outer - 2 * stroke, mid, 0)
+	return GoldBar(parent, stroke, stroke, 0, 0)
+end
+
+local TITLE_BTN_SIZE, TITLE_BTN_GAP = 20, 2
+
+-- ButtonFrameTemplate / PortraitFrameTemplate regions, and what happens
+-- when the window is collapsed to MINIMIZED_HEIGHT (32px):
+--   NineSlice (TopLeftCorner, TopRightCorner, BottomLeftCorner,
+--     BottomRightCorner, TopEdge, BottomEdge, LeftEdge, RightEdge)
+--     HIDE. The corners are larger than a title strip and are drawn slightly
+--     outside the frame, so the left edge sticks out above and below the bar
+--     and the right edge runs past the close button.
+--   TopTileStreaks  HIDE. Title ornament sized for a full window header.
+--   Bg              HIDE. Full-window background; the minimized bar paints
+--     its own fill so no corner of this texture can poke out.
+--   Inset           already always hidden (the list has its own inset).
+--     Leave hidden; do not show it again on restore.
+--   PortraitContainer, portrait, Portrait
+--     already hidden by ButtonFrameTemplate_HidePortrait. Leave hidden.
+--   TitleContainer, TitleText, CloseButton, min and reset buttons
+--     KEEP. Title and chrome buttons stay on the strip.
+--   panel.body (Scan, profitable, brackets, list + its NineSlice and
+--     scroll bar, status)  already hidden by SetBodyShown.
+--   minChrome (fill + 1px border, all points inside the frame)
+--     SHOW while minimized, HIDE on restore so the template looks as before.
+local WINDOW_CHROME = { "NineSlice", "TopTileStreaks", "Bg" }
+
+local function PaintRGBA(tex, r, g, b, a)
+	if tex.SetColorTexture then
+		tex:SetColorTexture(r, g, b, a or 1)
+	else
+		tex:SetTexture(r, g, b, a or 1)
+	end
+end
+
+local function EnsureMinChrome()
+	if not panel or panel.minChrome then return end
+	local chrome = CreateFrame("Frame", nil, panel)
+	chrome:SetAllPoints()
+	chrome:EnableMouse(false)
+	local fill = chrome:CreateTexture(nil, "BACKGROUND")
+	-- Dark inner fill, close to the usual button-frame background.
+	PaintRGBA(fill, 0.07, 0.06, 0.05, 1)
+	fill:SetPoint("TOPLEFT", 1, -1)
+	fill:SetPoint("BOTTOMRIGHT", -1, 1)
+	-- 1px border fully inside the frame, so nothing draws outside the strip.
+	local br, bg, bb = 0.55, 0.45, 0.28
+	local top = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(top, br, bg, bb, 1)
+	top:SetPoint("TOPLEFT")
+	top:SetPoint("TOPRIGHT")
+	top:SetHeight(1)
+	local bottom = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(bottom, br, bg, bb, 1)
+	bottom:SetPoint("BOTTOMLEFT")
+	bottom:SetPoint("BOTTOMRIGHT")
+	bottom:SetHeight(1)
+	local left = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(left, br, bg, bb, 1)
+	left:SetPoint("TOPLEFT")
+	left:SetPoint("BOTTOMLEFT")
+	left:SetWidth(1)
+	local right = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(right, br, bg, bb, 1)
+	right:SetPoint("TOPRIGHT")
+	right:SetPoint("BOTTOMRIGHT")
+	right:SetWidth(1)
+	chrome:Hide()
+	panel.minChrome = chrome
+end
+
+local function SetWindowChromeShown(shown)
+	if not panel then return end
+	for _, key in ipairs(WINDOW_CHROME) do
+		local r = panel[key]
+		if r and r.SetShown then r:SetShown(shown) end
+	end
+	if not shown then EnsureMinChrome() end
+	if panel.minChrome then panel.minChrome:SetShown(not shown) end
+end
+
+function UpdateTitle()
+	if not panel then return end
+	if not IsMinimized() then
+		SetTitle(panel, "Disenchant Deals")
+		return
+	end
+	if scanning then
+		SetTitle(panel, "Disenchant Deals — scanning " .. #results)
+	else
+		local n = 0
+		for _, r in ipairs(results) do
+			if r.profit and r.profit > 0 then n = n + 1 end
+		end
+		if #results > 0 then
+			SetTitle(panel, "Disenchant Deals — " .. n .. " profitable")
+		else
+			SetTitle(panel, "Disenchant Deals")
+		end
+	end
+end
+
+local function SetBodyShown(shown)
+	if not (panel and panel.body) then return end
+	for _, region in ipairs(panel.body) do
+		region:SetShown(shown)
+	end
+end
+
+local function UpdateMinButton()
+	if not (panel and panel.minButton) then return end
+	local minimized = IsMinimized()
+	if panel.minButton.minus then panel.minButton.minus:SetShown(not minimized) end
+	if panel.minButton.plusH then
+		panel.minButton.plusH:SetShown(minimized)
+		panel.minButton.plusV:SetShown(minimized)
+	end
+end
+
+-- Collapse to the title bar, or restore the full list. The frame stays shown
+-- and a running scan is not stopped (unlike closing or /dv deals).
+local function SetMinimized(minimized)
+	local d = DB()
+	if d then d.ahPanelMinimized = minimized and true or false end
+	if not panel then return end
+	ApplyPosition()
+	SetBodyShown(not IsMinimized())
+	SetWindowChromeShown(not IsMinimized())
+	UpdateTitle()
+	UpdateMinButton()
 end
 
 local function InitRow(row, r)
@@ -657,6 +920,9 @@ local function InitRow(row, r)
 				GameTooltip:AddLine("Checking the current price...", 0.7, 0.7, 0.7)
 			end
 			GameTooltip:AddLine("Right-click to open it in the auction house.", 0.7, 0.7, 0.7)
+			if res.stale then
+				GameTooltip:AddLine("DE value uses a saved price: Auctionator has no current price for one of its materials.", 0.6, 0.6, 0.6, true)
+			end
 			GameTooltip:Show()
 		end)
 		row:SetScript("OnLeave", function(self)
@@ -691,7 +957,11 @@ local function InitRow(row, r)
 	else
 		SetMoney(c[4], r.buyout)
 	end
-	SetMoney(c[5], r.value)
+	if r.stale then
+		SetMoney(c[5], r.value, 0.6, 0.6, 0.6)
+	else
+		SetMoney(c[5], r.value)
+	end
 	if r.profit and r.profit > 0 then
 		SetMoney(c[6], r.profit, 0.1, 1, 0.1)
 	elseif r.profit then
@@ -768,11 +1038,15 @@ local function CreateBracketButtons(parent, anchor)
 		SetTooltip(b, function()
 			GameTooltip:AddLine("Item level " .. label)
 			GameTooltip:AddLine("Uncommon items give:", 0.7, 0.7, 0.7)
-			for _, itemID in ipairs(br.materials) do
+			local function AddMaterial(itemID, suffix)
 				local name = C_Item.GetItemInfo(itemID)
 				if not name and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
-				GameTooltip:AddLine(name or ("item " .. itemID), 1, 1, 1)
+				GameTooltip:AddLine((name or ("item " .. itemID)) .. (suffix or ""), 1, 1, 1)
 			end
+			for mi, itemID in ipairs(br.materials) do
+				AddMaterial(itemID, (mi == 2 and br.weaponEssence) and " (armor)" or nil)
+			end
+			if br.weaponEssence then AddMaterial(br.weaponEssence, " (weapons)") end
 			GameTooltip:AddLine("Click to show or hide this bracket.", 0.7, 0.7, 0.7)
 		end)
 		list[i] = b
@@ -790,6 +1064,10 @@ local function CreateBracketButtons(parent, anchor)
 		for i, b in ipairs(list) do Paint(b, brackets[i]) end
 	end
 
+	panel.bracketButtons = { all }
+	for i, b in ipairs(list) do
+		panel.bracketButtons[#panel.bracketButtons + 1] = b
+	end
 end
 
 local function CreateHeaders(parent)
@@ -821,11 +1099,37 @@ end
 local function CreatePanel()
 	panel = CreateFrame("Frame", "DisenchantValueAuctionPanel", AuctionHouseFrame, "ButtonFrameTemplate")
 	ns.auctionPanel = panel
+	-- Above the auction house and Auctionator (MEDIUM). SetToplevel keeps this
+	-- window's children together when it is raised, so their text cannot draw
+	-- through one another or sit under the auction house list.
+	panel:SetFrameStrata("HIGH")
+	panel:SetToplevel(true)
 	if ButtonFrameTemplate_HidePortrait then ButtonFrameTemplate_HidePortrait(panel) end
 	panel:SetWidth(PANEL_WIDTH)
-	panel:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 0, 0)
-	panel:SetPoint("BOTTOMLEFT", AuctionHouseFrame, "BOTTOMRIGHT", 0, 0)
 	panel:EnableMouse(true)
+	ApplyPosition()
+
+	-- Drag by the title bar or any empty spot (rows and buttons keep their clicks).
+	panel:SetMovable(true)
+	panel:RegisterForDrag("LeftButton")
+	panel:SetScript("OnDragStart", function(self)
+		-- Swap the two-point anchor to the auction house for a single corner
+		-- point with a fixed height first, so the panel keeps its size while moving.
+		local left, top, height = self:GetLeft(), self:GetTop(), self:GetHeight()
+		if left and top and height then
+			self:ClearAllPoints()
+			self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+			self:SetHeight(height)
+		end
+		self:SetClampedToScreen(true)
+		self:StartMoving()
+	end)
+	panel:SetScript("OnDragStop", function(self)
+		self:StopMovingOrSizing()
+		-- Our own saved position is used, not the client's layout cache.
+		if self.SetUserPlaced then self:SetUserPlaced(false) end
+		SavePosition()
+	end)
 	SetTitle(panel, "Disenchant Deals")
 	panel:Hide()
 
@@ -833,6 +1137,60 @@ local function CreatePanel()
 	if panel.CloseButton then
 		panel.CloseButton:SetScript("OnClick", function() SetPanelWanted(false) end)
 	end
+
+	-- Title-bar chrome: reset position, then minimize/restore, then close.
+	-- 20px gold line icons, vertically centred on the close button, 2px apart.
+	local function TitleBarButton(tooltip)
+		local b = CreateFrame("Button", nil, panel)
+		b:SetSize(TITLE_BTN_SIZE, TITLE_BTN_SIZE)
+		b:EnableMouse(true)
+		b:RegisterForClicks("LeftButtonUp")
+		b:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
+		b:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+			GameTooltip:AddLine(tooltip(self))
+			GameTooltip:Show()
+		end)
+		b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+		return b
+	end
+
+	local function MatchCloseLevel(b)
+		if not panel.CloseButton then return end
+		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
+		if type(lvl) == "number" then b:SetFrameLevel(lvl) end
+	end
+
+	local minBtn = TitleBarButton(function()
+		return IsMinimized() and "Restore" or "Minimize"
+	end)
+	minBtn.minus = GoldBar(minBtn, 8, 2, 0, 0)
+	minBtn.plusH = GoldBar(minBtn, 8, 2, 0, 0)
+	minBtn.plusV = GoldBar(minBtn, 2, 8, 0, 0)
+	minBtn.plusH:Hide()
+	minBtn.plusV:Hide()
+	minBtn:SetScript("OnClick", function()
+		SetMinimized(not IsMinimized())
+	end)
+	if panel.CloseButton then
+		minBtn:SetPoint("RIGHT", panel.CloseButton, "LEFT", -TITLE_BTN_GAP, 0)
+		MatchCloseLevel(minBtn)
+	else
+		minBtn:SetPoint("TOPRIGHT", -(6 + TITLE_BTN_GAP), -6)
+	end
+	panel.minButton = minBtn
+
+	-- Target (ring + dot): put the window back beside the auction house.
+	local resetBtn = TitleBarButton(function()
+		return "Reset position"
+	end)
+	resetBtn.dot = GoldTarget(resetBtn)
+	resetBtn:SetPoint("RIGHT", minBtn, "LEFT", -TITLE_BTN_GAP, 0)
+	resetBtn:SetScript("OnClick", function()
+		ResetPanelPosition()
+	end)
+	MatchCloseLevel(resetBtn)
+	panel.resetButton = resetBtn
 
 	-- Item name column takes whatever width the others leave.
 	local inner = PANEL_WIDTH - 16 - 4 - 26 -- list insets, then header container insets
@@ -915,12 +1273,23 @@ local function CreatePanel()
 	status:SetJustifyH("LEFT")
 	status:SetText("Press Scan to search the auction house for weapons and armor to disenchant.")
 	panel.status = status
+	panel.list = list
+	panel.profitableLabel = profitableLabel
+
+	panel.body = { scan, profitable, profitableLabel, list, status }
+	if panel.bracketButtons then
+		for _, b in ipairs(panel.bracketButtons) do
+			panel.body[#panel.body + 1] = b
+		end
+	end
 
 	function panel:UpdateButtons()
 		self.scan:SetText(scanning and "Stop" or "Scan")
 	end
 
-	panel:SetScript("OnShow", function()
+	panel:SetScript("OnShow", function(self)
+		self:Raise()
+		SetMinimized(IsMinimized())
 		Rebuild()
 		UpdateTab()
 	end)
@@ -931,6 +1300,7 @@ local function CreatePanel()
 
 	panel:UpdateButtons()
 	panel:UpdateBrackets()
+	SetMinimized(IsMinimized())
 end
 
 -- A tab under the auction house, after its own tabs, that shows or hides the panel.
@@ -987,6 +1357,7 @@ function ns.ShowAuctionPanel()
 	wipe(brackets)
 	for i in pairs(d and d.ahBrackets or {}) do brackets[i] = true end
 	panel:UpdateBrackets()
+	SetMinimized(IsMinimized())
 	panel:SetShown(IsPanelWanted())
 	UpdateTab()
 end
@@ -998,8 +1369,27 @@ function ns.RefreshAuctionValues()
 end
 
 function ns.AuctionSlash(msg)
-	local cmd = (msg or ""):lower():match("^(%S*)")
-	if cmd ~= "ah" then return false end
+	local cmd, arg = (msg or ""):lower():match("^(%S*)%s*(%S*)")
+	if cmd ~= "ah" and cmd ~= "deals" and cmd ~= "ahreset" and cmd ~= "ahscale" and cmd ~= "min" then return false end
+	local d = DB()
+	if cmd == "ahreset" then
+		ResetPanelPosition()
+		Print("auction house panel is back beside the auction house")
+		return true
+	elseif cmd == "min" then
+		SetMinimized(not IsMinimized())
+		Print("auction house panel " .. (IsMinimized() and "minimized" or "restored"))
+		return true
+	elseif cmd == "ahscale" then
+		local scale = tonumber(arg)
+		if not scale or scale < MIN_SCALE or scale > MAX_SCALE then
+			Print(("usage: /dv ahscale %.1f-%.1f (now %s)"):format(MIN_SCALE, MAX_SCALE, tostring(d and d.ahPanelScale or 1)))
+		else
+			SetScaleSaved(scale)
+			Print("auction house panel scale " .. scale)
+		end
+		return true
+	end
 	local wanted = not IsPanelWanted()
 	SetPanelWanted(wanted)
 	Print("auction house panel " .. (wanted and "shown" or "hidden"))

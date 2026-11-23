@@ -21,6 +21,9 @@ local CALLER_ID = "DisenchantValue"
 local BRACKET_SIZE = 5
 local MAX_BRACKET_DISTANCE = 2 -- in brackets, for the nearest-bucket fallback
 local PENDING_TIMEOUT = 15
+-- The auction house keeps 5% of every sale. Disenchant values are what the
+-- materials bring in after that cut, unless /dv ahcut off.
+local AH_CUT_PERCENT = 5
 
 local ITEMCLASS_WEAPON = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 local ITEMCLASS_ARMOR = (Enum and Enum.ItemClass and Enum.ItemClass.Armor) or 4
@@ -92,6 +95,13 @@ local ERA_MATERIALS = {
 
 -- Uncommon: armor gives mostly dust, weapons mostly essence (the dust and
 -- essence chances are swapped), plus a small chance of a shard.
+-- WoW Forever: the only per-row live Forever table is BootyBayBroker's
+-- (https://bootybaybroker.com/forever/crafting/disenchant, "observed" odds;
+-- brackets from the Forever client's disenchant table, build 1.60.1.70755).
+-- It matches the rows here except: 51+ give 22% essence (armor) / 22% dust
+-- (weapons) and 3% shard instead of the 20%/5% this addon used before
+-- (Classic reference: armor 20/5, weapons 22/3; changed below), and
+-- weapons 21-30 give Greater Magic Essence (UNCOMMON_WEAPON).
 -- { minIlvl, maxIlvl, dust%, essence%, shard%, dust, dustMin, dustMax, essence, essMin, essMax, shard }
 local UNCOMMON = {
 	{ 1, 15, 80, 20, 0, STRANGE_DUST, 1, 2, LESSER_MAGIC, 1, 2 },
@@ -102,31 +112,56 @@ local UNCOMMON = {
 	{ 36, 40, 75, 20, 5, VISION_DUST, 1, 2, GREATER_MYSTIC, 1, 2, LARGE_GLOWING },
 	{ 41, 45, 75, 20, 5, VISION_DUST, 2, 5, LESSER_NETHER, 1, 2, SMALL_RADIANT },
 	{ 46, 50, 75, 20, 5, DREAM_DUST, 1, 2, GREATER_NETHER, 1, 2, LARGE_RADIANT },
-	{ 51, 55, 75, 20, 5, DREAM_DUST, 2, 5, LESSER_ETERNAL, 1, 2, SMALL_BRILLIANT },
-	{ 56, 60, 75, 20, 5, ILLUSION_DUST, 1, 2, GREATER_ETERNAL, 1, 2, LARGE_BRILLIANT },
-	{ 61, 999, 75, 20, 5, ILLUSION_DUST, 2, 5, GREATER_ETERNAL, 2, 3, LARGE_BRILLIANT },
+	-- 51+: 22% essence and 3% shard on WoW Forever (BootyBayBroker, see below).
+	{ 51, 55, 75, 22, 3, DREAM_DUST, 2, 5, LESSER_ETERNAL, 1, 2, SMALL_BRILLIANT },
+	{ 56, 60, 75, 22, 3, ILLUSION_DUST, 1, 2, GREATER_ETERNAL, 1, 2, LARGE_BRILLIANT },
+	{ 61, 999, 75, 22, 3, ILLUSION_DUST, 2, 5, GREATER_ETERNAL, 2, 3, LARGE_BRILLIANT },
+}
+
+-- Uncommon weapons on WoW Forever, where they differ from the rows above
+-- (keyed by minIlvl; dust% and shard% here would be the weapon's own chances).
+--	* Item level 21-30: Greater Magic Essence instead of Lesser/Greater Astral
+--		Essence; dust and shard still follow the item level. Live Forever:
+--		BootyBayBroker ("observed") and the Naowh Forever 1.3.0 changelog
+--		(Nov 16, 2026). Classic tables list Astral.
+local UNCOMMON_WEAPON = {
+	[21] = { essence = GREATER_MAGIC },
+	[26] = { essence = GREATER_MAGIC },
 }
 
 -- The item level brackets above with the dust, essence and shard each gives,
 -- for the auction house scanner's bracket filters.
 ns.DISENCHANT_BRACKETS = {}
 for _, u in ipairs(UNCOMMON) do
-	ns.DISENCHANT_BRACKETS[#ns.DISENCHANT_BRACKETS + 1] = { min = u[1], max = u[2], materials = { u[6], u[9], u[12] } }
+	local w = UNCOMMON_WEAPON[u[1]]
+	ns.DISENCHANT_BRACKETS[#ns.DISENCHANT_BRACKETS + 1] = { min = u[1], max = u[2], materials = { u[6], u[9], u[12] },
+		weaponEssence = w and w.essence ~= u[9] and w.essence or nil }
 end
 
 local function BuildUncommon(isWeapon)
 	local rows = {}
 	for _, u in ipairs(UNCOMMON) do
-		local dustChance, essChance = u[3], u[4]
-		if isWeapon then dustChance, essChance = essChance, dustChance end
-		local row = { u[1], u[2], { dustChance, u[7], u[8], u[6] }, { essChance, u[10], u[11], u[9] } }
-		if u[5] > 0 then row[#row + 1] = { u[5], 1, 1, u[12] } end
+		local dustChance, essChance, shardChance, essence = u[3], u[4], u[5], u[9]
+		if isWeapon then
+			dustChance, essChance = essChance, dustChance
+			local w = UNCOMMON_WEAPON[u[1]]
+			if w then
+				dustChance = w.dust or dustChance
+				shardChance = w.shard or shardChance
+				essence = w.essence or essence
+			end
+		end
+		local row = { u[1], u[2], { dustChance, u[7], u[8], u[6] }, { essChance, u[10], u[11], essence } }
+		if shardChance > 0 then row[#row + 1] = { shardChance, 1, 1, u[12] } end
 		rows[#rows + 1] = row
 	end
 	return rows
 end
 
 -- Rare and epic items give shards (or Nexus Crystals), the same for armor and weapons.
+-- Rare 56+: the 0.5% Nexus Crystal is disputed for WoW Forever (BootyBayBroker
+-- lists 100% Large Brilliant Shard; WoW-Professions' Forever guide says about
+-- 0.5% Nexus Crystal), so it is left as it was.
 local ERA_RARE = {
 	{ 1, 25, { 100, 1, 1, SMALL_GLIMMERING } },
 	{ 26, 30, { 100, 1, 1, LARGE_GLIMMERING } },
@@ -171,17 +206,35 @@ end
 ---------------------------------------------------------------------------
 
 -- Prices are Auctionator's last scan price. We keep our own copy (db.prices)
--- so a price stays available when Auctionator has none for an item.
+-- so a price stays available when Auctionator has none for an item, but such
+-- a saved price is returned as stale (second value): it can be old, or from
+-- another realm or faction, since db.prices is shared by the whole account.
 local function GetPrice(itemID)
 	local key = tostring(itemID)
 	local adb = Auctionator and Auctionator.Database and Auctionator.Database.db
 	local live = adb and adb[key]
 	if type(live) == "table" and live.m and live.m > 0 then
-		db.prices[key] = { m = live.m }
+		db.prices[key] = { m = live.m, t = time() }
+		return live.m, false
 	end
 
 	local entry = db.prices[key]
-	if entry and entry.m and entry.m > 0 then return entry.m end
+	if entry and entry.m and entry.m > 0 then return entry.m, true end
+end
+
+-- Whether values are shown after the auction house cut (on unless /dv ahcut off).
+function ns.AHCutOn()
+	return not (db and db.ahCut == false)
+end
+
+-- What selling for copper on the auction house brings in, after its cut.
+-- Pass the unrounded amount: the result is floor(copper * 95 / 100), rounded
+-- down once at the end (a disenchant value of 1566.9c nets 1488c, not
+-- floor(1566) * 0.95 = 1487c). With /dv ahcut off it is floor(copper).
+function ns.AfterAHCut(copper)
+	if not copper then return end
+	if ns.AHCutOn() then return math.floor(copper * (100 - AH_CUT_PERCENT) / 100) end
+	return math.floor(copper)
 end
 
 ---------------------------------------------------------------------------
@@ -207,23 +260,24 @@ local function FindBucket(classID, quality, bracket)
 	return best, best ~= nil
 end
 
--- Returns value (copper), sampleCount, isApproximate, isPartial
+-- Returns value (copper, after the AH cut), sampleCount, isApproximate, isPartial, isStale
 function ns.GetDisenchantValue(link)
 	local classID, quality, bracket = Classify(link)
 	if not classID then return end
 	local rec, approx = FindBucket(classID, quality, bracket)
 	if not rec then return end
 
-	local total, partial = 0, false
+	local total, partial, stale = 0, false, false
 	for itemID, qty in pairs(rec.items) do
-		local price = GetPrice(itemID)
+		local price, old = GetPrice(itemID)
 		if price then
 			total = total + (qty / rec.n) * price
+			if old then stale = true end
 		else
 			partial = true
 		end
 	end
-	return math.floor(total), rec.n, approx, partial
+	return ns.AfterAHCut(total), rec.n, approx, partial, stale
 end
 
 ---------------------------------------------------------------------------
@@ -231,6 +285,9 @@ end
 ---------------------------------------------------------------------------
 
 -- Expected value (copper) of the era table for this item, or nil if not covered.
+-- Returns value after the AH cut, isPartial, isStale, value before the cut.
+-- Both are rounded down from the same unrounded total: floor(total * 0.95)
+-- and floor(total).
 function ns.GetEraValue(link)
 	local classID, quality, _, ilvl = Classify(link)
 	if not classID then return end
@@ -238,17 +295,18 @@ function ns.GetEraValue(link)
 	if not rows then return end
 	for _, row in ipairs(rows) do
 		if ilvl >= row[1] and ilvl <= row[2] then
-			local total, partial = 0, false
+			local total, partial, stale = 0, false, false
 			for i = 3, #row do
 				local chance, minQty, maxQty, itemID = unpack(row[i])
-				local price = GetPrice(itemID)
+				local price, old = GetPrice(itemID)
 				if price then
 					total = total + (chance / 100) * ((minQty + maxQty) / 2) * price
+					if old then stale = true end
 				else
 					partial = true
 				end
 			end
-			return math.floor(total), partial
+			return ns.AfterAHCut(total), partial, stale, math.floor(total)
 		end
 	end
 end
@@ -256,18 +314,20 @@ end
 -- Expected disenchant value in copper: the average worth of what the item
 -- disenchants into, from the disenchant table, with every possible result
 -- weighted by its chance and average quantity and priced at its latest
--- auction house scan price. Your own disenchant results are not used here
--- (they are still recorded, see /dv stats). Used by the tooltip, the disenchant
--- button and the auction house scanner.
+-- auction house scan price, less the auction house cut. Your own disenchant
+-- results are not used here (they are still recorded, see /dv stats). Used by
+-- the tooltip, the disenchant button and the auction house scanner.
+-- Returns value, isStale.
 function ns.GetExpectedValue(link)
 	if not db or not link then return end
-	local era = ns.GetEraValue(link)
-	if era and era > 0 then return era end
+	local era, _, stale = ns.GetEraValue(link)
+	if era and era > 0 then return era, stale end
 end
 
 -- Public API for other addons (Auctionator's "DE Value" column uses it).
 -- Accepts an item link or item ID. Returns the learned value when there are
 -- samples, otherwise the era table value; nil if not disenchantable or unpriced.
+-- Values are after the auction house cut, like the tooltip (/dv ahcut off for the full price).
 DisenchantValueAPI = {
 	GetValue = function(item)
 		if not db or not item then return end
@@ -318,10 +378,18 @@ local function AddTooltipLine(tooltip, link)
 	if not db or not link then return end
 
 	-- The same value as the auction house scanner's "DE value" column.
-	local value, partial = ns.GetEraValue(link)
+	local value, partial, stale, gross = ns.GetEraValue(link)
 	if not value then return end -- not a disenchantable item (uncommon/rare/epic weapon or armor)
 
-	tooltip:AddDoubleLine("Disenchant value:", FormatMoney(value, false, partial))
+	local text = FormatMoney(value, false, partial)
+	if stale then text = text .. "|cff808080 (old price)|r" end
+	tooltip:AddDoubleLine("Disenchant value:", text)
+	if IsShiftKeyDown() and ns.AHCutOn() and gross and gross > 0 then
+		tooltip:AddDoubleLine("Before 5% AH cut:", FormatMoney(gross, false, partial), 0.7, 0.7, 0.7)
+	end
+	if stale and IsShiftKeyDown() then
+		tooltip:AddLine("Auctionator has no current price for a material; a saved one is used.", 0.7, 0.7, 0.7, true)
+	end
 end
 
 local function OnTooltipItem(tooltip, data)
@@ -427,7 +495,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
 		-- Leftovers from the "mean" price mode and its per-day price history, no longer used.
 		db.priceMode = nil
 		for key, entry in pairs(db.prices) do
-			db.prices[key] = { m = entry.m }
+			db.prices[key] = { m = entry.m, t = entry.t }
 		end
 
 	elseif event == "UNIT_SPELLCAST_SENT" then
@@ -475,6 +543,13 @@ SlashCmdList["DISENCHANTVALUE"] = function(msg)
 				and Auctionator.API.v1.GetAuctionPriceByItemID(CALLER_ID, id)
 			Print(("item %d: latest=%s"):format(id, tostring(latest)))
 		end
+	elseif cmd == "ahcut" then
+		local arg = (msg or ""):lower():match("^%S*%s+(%S+)")
+		if arg == "on" or arg == "off" then db.ahCut = (arg == "on") end
+		Print("values " .. (ns.AHCutOn() and "are after the 5% auction house cut" or "are the full price (no auction house cut)")
+			.. " (/dv ahcut on|off)")
+		if ns.RefreshAuctionValues then ns.RefreshAuctionValues() end
+		if ns.QueueButtonRefresh then ns.QueueButtonRefresh() end
 	elseif cmd == "stats" then
 		local buckets, casts = 0, 0
 		for _, rec in pairs(db.buckets) do
@@ -485,9 +560,9 @@ SlashCmdList["DISENCHANTVALUE"] = function(msg)
 	elseif ns.ButtonSlash and ns.ButtonSlash(msg) then
 		-- handled by the disenchant button (button, list, ignore, unignore, ahcheck)
 	elseif ns.AuctionSlash and ns.AuctionSlash(msg) then
-		-- handled by the auction house scanner (ah)
+		-- handled by the auction house scanner (deals, ah, min, ahreset, ahscale)
 	else
-		Print("/dv stats | /dv reset | /dv ah")
+		Print("/dv stats | /dv reset | /dv ahcut on|off | /dv deals | /dv ah | /dv min | /dv ahreset | /dv ahscale 0.5-1.5")
 		Print("/dv button | /dv list | /dv ignore [link] | /dv unignore [link] | /dv ahcheck on|off | /dv attach on|off | /dv status")
 	end
 end
