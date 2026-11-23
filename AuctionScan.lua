@@ -712,6 +712,96 @@ local function GoldBar(parent, width, height, x, y)
 	return tex
 end
 
+-- Reset-position icon: a 12px square target (2px ring + 2px center dot), the
+-- same stroke and gold as the minus/plus, pixel-aligned in a 20px button.
+local function GoldTarget(parent)
+	local outer, stroke = 12, 2
+	local mid = (outer - stroke) / 2 -- 5: centre of each edge bar
+	GoldBar(parent, outer, stroke, 0, mid)
+	GoldBar(parent, outer, stroke, 0, -mid)
+	GoldBar(parent, stroke, outer - 2 * stroke, -mid, 0)
+	GoldBar(parent, stroke, outer - 2 * stroke, mid, 0)
+	return GoldBar(parent, stroke, stroke, 0, 0)
+end
+
+local TITLE_BTN_SIZE, TITLE_BTN_GAP = 20, 2
+
+-- ButtonFrameTemplate / PortraitFrameTemplate regions, and what happens
+-- when the window is collapsed to MINIMIZED_HEIGHT (32px):
+--   NineSlice (TopLeftCorner, TopRightCorner, BottomLeftCorner,
+--     BottomRightCorner, TopEdge, BottomEdge, LeftEdge, RightEdge)
+--     HIDE. The corners are larger than a title strip and are drawn slightly
+--     outside the frame, so the left edge sticks out above and below the bar
+--     and the right edge runs past the close button.
+--   TopTileStreaks  HIDE. Title ornament sized for a full window header.
+--   Bg              HIDE. Full-window background; the minimized bar paints
+--     its own fill so no corner of this texture can poke out.
+--   Inset           already always hidden (the list has its own inset).
+--     Leave hidden; do not show it again on restore.
+--   PortraitContainer, portrait, Portrait
+--     already hidden by ButtonFrameTemplate_HidePortrait. Leave hidden.
+--   TitleContainer, TitleText, CloseButton, min and reset buttons
+--     KEEP. Title and chrome buttons stay on the strip.
+--   panel.body (Scan, profitable, brackets, list + its NineSlice and
+--     scroll bar, status)  already hidden by SetBodyShown.
+--   minChrome (fill + 1px border, all points inside the frame)
+--     SHOW while minimized, HIDE on restore so the template looks as before.
+local WINDOW_CHROME = { "NineSlice", "TopTileStreaks", "Bg" }
+
+local function PaintRGBA(tex, r, g, b, a)
+	if tex.SetColorTexture then
+		tex:SetColorTexture(r, g, b, a or 1)
+	else
+		tex:SetTexture(r, g, b, a or 1)
+	end
+end
+
+local function EnsureMinChrome()
+	if not panel or panel.minChrome then return end
+	local chrome = CreateFrame("Frame", nil, panel)
+	chrome:SetAllPoints()
+	chrome:EnableMouse(false)
+	local fill = chrome:CreateTexture(nil, "BACKGROUND")
+	-- Dark inner fill, close to the usual button-frame background.
+	PaintRGBA(fill, 0.07, 0.06, 0.05, 1)
+	fill:SetPoint("TOPLEFT", 1, -1)
+	fill:SetPoint("BOTTOMRIGHT", -1, 1)
+	-- 1px border fully inside the frame, so nothing draws outside the strip.
+	local br, bg, bb = 0.55, 0.45, 0.28
+	local top = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(top, br, bg, bb, 1)
+	top:SetPoint("TOPLEFT")
+	top:SetPoint("TOPRIGHT")
+	top:SetHeight(1)
+	local bottom = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(bottom, br, bg, bb, 1)
+	bottom:SetPoint("BOTTOMLEFT")
+	bottom:SetPoint("BOTTOMRIGHT")
+	bottom:SetHeight(1)
+	local left = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(left, br, bg, bb, 1)
+	left:SetPoint("TOPLEFT")
+	left:SetPoint("BOTTOMLEFT")
+	left:SetWidth(1)
+	local right = chrome:CreateTexture(nil, "BORDER")
+	PaintRGBA(right, br, bg, bb, 1)
+	right:SetPoint("TOPRIGHT")
+	right:SetPoint("BOTTOMRIGHT")
+	right:SetWidth(1)
+	chrome:Hide()
+	panel.minChrome = chrome
+end
+
+local function SetWindowChromeShown(shown)
+	if not panel then return end
+	for _, key in ipairs(WINDOW_CHROME) do
+		local r = panel[key]
+		if r and r.SetShown then r:SetShown(shown) end
+	end
+	if not shown then EnsureMinChrome() end
+	if panel.minChrome then panel.minChrome:SetShown(not shown) end
+end
+
 function UpdateTitle()
 	if not panel then return end
 	if not IsMinimized() then
@@ -758,6 +848,7 @@ local function SetMinimized(minimized)
 	if not panel then return end
 	ApplyPosition()
 	SetBodyShown(not IsMinimized())
+	SetWindowChromeShown(not IsMinimized())
 	UpdateTitle()
 	UpdateMinButton()
 end
@@ -1048,10 +1139,10 @@ local function CreatePanel()
 	end
 
 	-- Title-bar chrome: reset position, then minimize/restore, then close.
-	-- Small gold line icons, the same 20px class as a typical close "X".
+	-- 20px gold line icons, vertically centred on the close button, 2px apart.
 	local function TitleBarButton(tooltip)
 		local b = CreateFrame("Button", nil, panel)
-		b:SetSize(20, 20)
+		b:SetSize(TITLE_BTN_SIZE, TITLE_BTN_SIZE)
 		b:EnableMouse(true)
 		b:RegisterForClicks("LeftButtonUp")
 		b:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight", "ADD")
@@ -1062,6 +1153,12 @@ local function CreatePanel()
 		end)
 		b:SetScript("OnLeave", function() GameTooltip:Hide() end)
 		return b
+	end
+
+	local function MatchCloseLevel(b)
+		if not panel.CloseButton then return end
+		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
+		if type(lvl) == "number" then b:SetFrameLevel(lvl) end
 	end
 
 	local minBtn = TitleBarButton(function()
@@ -1076,30 +1173,23 @@ local function CreatePanel()
 		SetMinimized(not IsMinimized())
 	end)
 	if panel.CloseButton then
-		minBtn:SetPoint("RIGHT", panel.CloseButton, "LEFT", 0, 0)
-		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
-		if type(lvl) == "number" then minBtn:SetFrameLevel(lvl) end
+		minBtn:SetPoint("RIGHT", panel.CloseButton, "LEFT", -TITLE_BTN_GAP, 0)
+		MatchCloseLevel(minBtn)
 	else
-		minBtn:SetPoint("TOPRIGHT", -6, -6)
+		minBtn:SetPoint("TOPRIGHT", -(6 + TITLE_BTN_GAP), -6)
 	end
 	panel.minButton = minBtn
 
-	-- Crosshair: put the window back beside the auction house (same as /dv ahreset).
+	-- Target (ring + dot): put the window back beside the auction house.
 	local resetBtn = TitleBarButton(function()
 		return "Reset position"
 	end)
-	GoldBar(resetBtn, 6, 2, 0, 6)
-	GoldBar(resetBtn, 6, 2, 0, -6)
-	GoldBar(resetBtn, 2, 6, 6, 0)
-	GoldBar(resetBtn, 2, 6, -6, 0)
-	resetBtn:SetPoint("RIGHT", minBtn, "LEFT", 0, 0)
+	resetBtn.dot = GoldTarget(resetBtn)
+	resetBtn:SetPoint("RIGHT", minBtn, "LEFT", -TITLE_BTN_GAP, 0)
 	resetBtn:SetScript("OnClick", function()
 		ResetPanelPosition()
 	end)
-	if panel.CloseButton then
-		local lvl = panel.CloseButton.GetFrameLevel and panel.CloseButton:GetFrameLevel()
-		if type(lvl) == "number" then resetBtn:SetFrameLevel(lvl) end
-	end
+	MatchCloseLevel(resetBtn)
 	panel.resetButton = resetBtn
 
 	-- Item name column takes whatever width the others leave.
