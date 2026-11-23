@@ -46,7 +46,7 @@ Open your bags and a **Disenchant** button appears underneath, showing how many 
 
 ## Find deals at the auction house
 
-A **Disenchant Deals** window opens beside the auction house. Press **Scan** to list every weapon and armor piece for sale, with its price, disenchant value and profit. The best deals are at the top.
+A **Disenchant Deals** window opens beside the auction house and always draws on top of the auction house and Auctionator. Press **Scan** to list every weapon and armor piece for sale, with its price, disenchant value and profit. The best deals are at the top.
 
 > **Careful: clicking an item buys it right away, with no "are you sure?" popup.**
 
@@ -62,7 +62,7 @@ Other things you can do in the window:
 - Use the number buttons to show only certain item levels. Hover over one to see which materials it gives.
 - Click a column name to sort by it.
 - Right-click an item to open it in the normal auction house view.
-- Use the **Disenchant** tab under the auction house to show or hide the window.
+- Use the **Disenchant** tab under the auction house, or type `/dv deals`, to show or hide the window.
 - Drag the window by its title (or any empty spot) to move it, for example when it doesn't fit beside the auction house. It remembers where you put it. `/dv ahreset` puts it back.
 
 ## Chat commands
@@ -78,7 +78,7 @@ You don't need these for normal use.
 | `/dv button` | Shows or hides the button |
 | `/dv attach` | Puts the button back under your bags |
 | `/dv status` | Shows why the button is or isn't showing (useful when reporting a problem) |
-| `/dv ah` | Shows or hides the Disenchant Deals window |
+| `/dv deals` | Shows or hides the Disenchant Deals window. `/dv ah` does the same |
 | `/dv ahreset` | Puts the Disenchant Deals window back beside the auction house, at normal size |
 | `/dv ahscale 0.8` | Makes the Disenchant Deals window smaller or bigger (0.5 to 1.5) |
 | `/dv ahcut off` | Shows values without taking off the auction house's 5% cut. `/dv ahcut on` takes it off again (the default) |

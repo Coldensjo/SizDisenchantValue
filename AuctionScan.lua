@@ -19,11 +19,12 @@ by its expected disenchant value and shows them in a sortable list.
 		A gray DE value uses a saved price: Auctionator has no current one.
 	* Drag the panel by its title or any empty spot to move it anywhere on the
 		screen; /dv ahreset puts it back beside the auction house.
+	* The panel always draws on top of the auction house and Auctionator.
 
 Uses the modern auction house API (C_AuctionHouse).
 
-Slash commands: /dv ah (turn the panel on or off), /dv ahreset (back beside
-the auction house, normal size), /dv ahscale 0.5-1.5 (panel size)
+Slash commands: /dv deals or /dv ah (turn the panel on or off), /dv ahreset
+(back beside the auction house, normal size), /dv ahscale 0.5-1.5 (panel size)
 ]]
 
 local _, ns = ...
@@ -901,6 +902,11 @@ end
 local function CreatePanel()
 	panel = CreateFrame("Frame", "DisenchantValueAuctionPanel", AuctionHouseFrame, "ButtonFrameTemplate")
 	ns.auctionPanel = panel
+	-- Above the auction house and Auctionator (MEDIUM). SetToplevel keeps this
+	-- window's children together when it is raised, so their text cannot draw
+	-- through one another or sit under the auction house list.
+	panel:SetFrameStrata("HIGH")
+	panel:SetToplevel(true)
 	if ButtonFrameTemplate_HidePortrait then ButtonFrameTemplate_HidePortrait(panel) end
 	panel:SetWidth(PANEL_WIDTH)
 	panel:EnableMouse(true)
@@ -1021,7 +1027,8 @@ local function CreatePanel()
 		self.scan:SetText(scanning and "Stop" or "Scan")
 	end
 
-	panel:SetScript("OnShow", function()
+	panel:SetScript("OnShow", function(self)
+		self:Raise()
 		Rebuild()
 		UpdateTab()
 	end)
@@ -1101,7 +1108,7 @@ end
 
 function ns.AuctionSlash(msg)
 	local cmd, arg = (msg or ""):lower():match("^(%S*)%s*(%S*)")
-	if cmd ~= "ah" and cmd ~= "ahreset" and cmd ~= "ahscale" then return false end
+	if cmd ~= "ah" and cmd ~= "deals" and cmd ~= "ahreset" and cmd ~= "ahscale" then return false end
 	local d = DB()
 	if cmd == "ahreset" then
 		if d then d.ahPanelPos, d.ahPanelScale = nil, nil end
